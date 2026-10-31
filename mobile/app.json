@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Velora",
+    "slug": "velora",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "velora",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.manju.velora"
+    },
+    "android": {
+      "package": "com.manju.velora"
+    },
+    
+    "plugins": [
+  "expo-secure-store",
+  "expo-notifications",
+  [
+    "expo-build-properties",
+    {
+      "android": {
+        "usesCleartextTraffic": true
+      }
+    }
+  ]
+],
+    "owner": "manjumathu",
+    "extra": {
+      "eas": {
+        "projectId": "f75ce4ae-b162-4658-ba20-76b1820c2691"
+      }
+    }
+  }
+}

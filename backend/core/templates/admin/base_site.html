@@ -1,0 +1,283 @@
+
+
+{% extends "admin/base.html" %}
+{% load static %}
+
+{% block title %}{{ title }} | Shop Management{% endblock %}
+
+{% block branding %}
+<div id="site-name">
+    <a href="{% url 'admin:index' %}" class="shop-brand">
+        <span class="shop-logo">S</span>
+        <span>SHOP MANAGEMENT</span>
+    </a>
+</div>
+{% endblock %}
+
+
+
+{% block nav-sidebar %}
+<nav id="nav-sidebar" class="shop-sidebar" aria-label="Main navigation">
+
+    <div class="sidebar-heading">MAIN MENU</div>
+
+    <a href="{% url 'admin:index' %}" class="sidebar-link">
+        <span>▦</span> Dashboard
+    </a>
+
+    <div class="sidebar-heading">CATALOG</div>
+
+    <a href="{% url 'admin:products_product_changelist' %}" class="sidebar-link">
+        <span>▣</span> Products
+    </a>
+
+    <a href="{% url 'admin:categories_category_changelist' %}" class="sidebar-link">
+        <span>▤</span> Categories
+    </a>
+
+    <a href="{% url 'admin:products_banner_changelist' %}" class="sidebar-link">
+        <span>▧</span> Banners
+    </a>
+
+    <div class="sidebar-heading">SALES</div>
+
+    <a href="{% url 'admin:orders_order_changelist' %}" class="sidebar-link">
+        <span>▣</span> Orders
+    </a>
+
+    <a href="{% url 'admin:accounts_user_changelist' %}" class="sidebar-link">
+        <span>♙</span> Customers
+    </a>
+
+    <a href="{% url 'admin:orders_stockmovement_changelist' %}" class="sidebar-link">
+        <span>▥</span> Inventory
+    </a>
+
+    <a href="{% url 'admin:coupons_coupon_changelist' %}" class="sidebar-link">
+        <span>％</span> Coupons
+    </a>
+
+    <div class="sidebar-heading">MANAGEMENT</div>
+
+    <a href="{% url 'admin:payments_payment_changelist' %}" class="sidebar-link">
+        <span>₹</span> Payments
+    </a>
+
+    <a href="{% url 'admin:reviews_productreview_changelist' %}" class="sidebar-link">
+        <span>☆</span> Reviews
+    </a>
+
+    <a href="{% url 'admin:notifications_notification_changelist' %}" class="sidebar-link">
+        <span>♧</span> Notifications
+    </a>
+
+    <div class="sidebar-footer">
+        <div class="sidebar-user">ADMIN PANEL</div>
+        <small>Shop Management System</small>
+    </div>
+
+</nav>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+
+<style>
+:root {
+    --shop-green: #145c3b;
+    --shop-dark: #103d2a;
+    --shop-light: #e8f5ed;
+    --shop-bg: #f5f8f6;
+}
+
+/* Page background */
+body {
+    background: var(--shop-bg) !important;
+}
+
+/* Header */
+#header {
+    background: var(--shop-dark) !important;
+    padding: 12px 24px !important;
+}
+
+#site-name {
+    margin: 0 !important;
+}
+
+.shop-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: white !important;
+    text-decoration: none !important;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.shop-logo {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    color: var(--shop-green);
+    border-radius: 10px;
+    font-size: 20px;
+    font-weight: 800;
+}
+
+/* Main layout */
+#main {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    min-height: calc(100vh - 60px);
+}
+
+/* Sidebar */
+#nav-sidebar.shop-sidebar {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 0 0 250px !important;
+    width: 250px !important;
+    min-width: 250px !important;
+    min-height: calc(100vh - 60px);
+    padding: 22px 14px !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    background: var(--shop-dark) !important;
+    border: none !important;
+    overflow-y: auto !important;
+    position: relative !important;
+    visibility: visible !important;
+}
+
+/* Sidebar headings */
+.sidebar-heading {
+    color: #91b9a2;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    padding: 20px 12px 9px;
+}
+
+/* Sidebar links */
+.sidebar-link {
+    display: flex !important;
+    align-items: center;
+    gap: 13px;
+    padding: 12px 14px;
+    margin: 3px 0;
+    border-radius: 8px;
+    color: #e5f2e9 !important;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none !important;
+    transition: all 0.2s ease;
+}
+
+.sidebar-link span {
+    width: 20px;
+    font-size: 17px;
+    text-align: center;
+}
+
+.sidebar-link:hover {
+    background: #246b49;
+    color: white !important;
+    transform: translateX(3px);
+}
+
+/* Sidebar footer */
+.sidebar-footer {
+    margin-top: auto;
+    padding: 22px 12px 10px;
+    border-top: 1px solid #32634a;
+    color: #d8eade;
+}
+
+.sidebar-user {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+}
+
+.sidebar-footer small {
+    color: #a9c9b5;
+    font-size: 10px;
+}
+
+/* Content wrapper */
+#main > .content {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Main content */
+#content {
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 28px !important;
+    box-sizing: border-box !important;
+}
+
+/* Tables and cards */
+.module {
+    border-radius: 10px !important;
+    overflow: hidden;
+    border: 1px solid #e4ebe6 !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+}
+
+.module h2,
+.module caption {
+    background: var(--shop-green) !important;
+    color: white !important;
+}
+
+.button,
+input[type=submit],
+input[type=button],
+.submit-row input {
+    background: var(--shop-green) !important;
+    border-radius: 6px !important;
+}
+
+.button:hover,
+input[type=submit]:hover {
+    background: var(--shop-dark) !important;
+}
+
+/* Mobile */
+@media (max-width: 767px) {
+    #main {
+        flex-direction: column !important;
+    }
+
+    #nav-sidebar.shop-sidebar {
+        flex: none !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        min-height: auto !important;
+    }
+
+    .sidebar-footer {
+        margin-top: 20px;
+    }
+
+    #content {
+        padding: 16px !important;
+    }
+}
+</style>
+{% endblock %}
