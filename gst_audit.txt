@@ -1,0 +1,3564 @@
+VELORA GST INTEGRATION AUDIT
+
+
+========== backend\products\models.py ==========
+
+from decimal import Decimal
+
+from django.core.validators import (
+    MinValueValidator,
+    MaxValueValidator,
+)
+from django.db import models
+from django.db.models import F, Q
+from django.utils.text import slugify
+
+
+
+class Product(models.Model):
+    category = models.ForeignKey(
+        "categories.Category",
+        on_delete=models.PROTECT,
+        related_name="products",
+    )
+    name = models.CharField(max_length=200, db_index=True)
+    slug = models.SlugField(max_length=220, unique=True, blank=True)
+    description = models.TextField(blank=True)
+    price = models.DecimalField(
+        "original price",
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+    )
+    discount_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    stock = models.PositiveIntegerField(default=0)
+    low_stock_threshold = models.PositiveIntegerField(default=5)
+    is_active = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False)
+    sold_count = models.PositiveIntegerField(default=0)
+    avg_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
+    review_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+       # GST Configuration
+    hsn_code = models.CharField(
+        max_length=8,
+        blank=True,
+        help_text="Enter the applicable HSN code.",
+    )
+
+    gst_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(Decimal("0")),
+            MaxValueValidator(Decimal("100")),
+        ],
+        help_text="Product GST rate in percentage.",
+    )
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                check=Q(discount_price__isnull=True)
+                | Q(discount_price__lt=F("price")),
+                name="discount_less_than_price",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.name)[:200]
+            self.slug = base
+            n = 1
+
+            while Product.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                n += 1
+                self.slug = f"{base}-{n}"
+
+        super().save(*args, **kwargs)
+
+    @property
+    def effective_price(self):
+        return (
+            self.discount_price
+            if self.discount_price is not None
+            else self.price
+        )
+
+    @property
+    def discount_percent(self):
+        if self.discount_price is None:
+            return 0
+
+        return int(
+            round((self.price - self.discount_price) / self.price * 100)
+        )
+
+    @property
+    def in_stock(self):
+        return self.stock > 0
+
+    @property
+    def is_low_stock(self):
+        return 0 < self.stock <= self.low_stock_threshold
+
+    def __str__(self):
+        return self.name
+
+
+class ProductImage(models.Model):
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="images",
+    )
+    image = models.ImageField(upload_to="products/")
+    alt_text = models.CharField(max_length=150, blank=True)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+
+class Banner(models.Model):
+    title = models.CharField(max_length=120)
+    image = models.ImageField(upload_to="banners/")
+    product = models.ForeignKey(
+        Product,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    category = models.ForeignKey(
+        "categories.Category",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return self.title
+
+
+========== backend\orders\models.py ==========
+import secrets
+from decimal import Decimal
+from django.conf import settings
+from django.db import models
+from django.utils import timezone
+
+
+class OrderStatus(models.TextChoices):
+    PENDING_PAYMENT = "PENDING_PAYMENT", "Pending payment"
+    PLACED = "PLACED", "Order placed"
+    CONFIRMED = "CONFIRMED", "Order confirmed"
+    PROCESSING = "PROCESSING", "Processing"
+    SHIPPED = "SHIPPED", "Shipped"
+    OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY", "Out for delivery"
+    DELIVERED = "DELIVERED", "Delivered"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+FLOW = [
+    OrderStatus.PLACED, OrderStatus.CONFIRMED, OrderStatus.PROCESSING,
+    OrderStatus.SHIPPED, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED,
+]
+# Customers may cancel until the parcel is handed to the courier.
+CANCELLABLE = {OrderStatus.PENDING_PAYMENT, OrderStatus.PLACED, OrderStatus.CONFIRMED, OrderStatus.PROCESSING}
+
+
+class PaymentMethod(models.TextChoices):
+    COD = "COD", "Cash on delivery"
+    RAZORPAY = "RAZORPAY", "Razorpay"
+
+
+class PaymentStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    PAID = "PAID", "Paid"
+    FAILED = "FAILED", "Failed"
+    REFUND_PENDING = "REFUND_PENDING", "Refund pending"
+    REFUNDED = "REFUNDED", "Refunded"
+
+
+def generate_order_number():
+    return f"ORD{timezone.localdate():%y%m%d}{secrets.token_hex(3).upper()}"
+
+class TaxType(models.TextChoices):
+    INTRA_STATE = "INTRA_STATE", "CGST + SGST"
+    INTER_STATE = "INTER_STATE", "IGST"
+class Order(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="orders")
+    order_number = models.CharField(max_length=20, unique=True, default=generate_order_number, editable=False)
+    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PLACED, db_index=True)
+    payment_method = models.CharField(max_length=10, choices=PaymentMethod.choices)
+    payment_status = models.CharField(max_length=15, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
+
+    # Address snapshot: later edits/deletes of the saved address must not change past orders.
+    address = models.ForeignKey("addresses.Address", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    shipping_name = models.CharField(max_length=120)
+    shipping_phone = models.CharField(max_length=15)
+    shipping_address = models.TextField()
+
+    items_total = models.DecimalField(max_digits=12, decimal_places=2)
+        # GST Billing Snapshot
+    original_items_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    product_discount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    coupon_discount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    taxable_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    gst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    cgst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    sgst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    igst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    tax_type = models.CharField(
+        max_length=15,
+        choices=TaxType.choices,
+        default=TaxType.INTRA_STATE,
+    )
+    coupon = models.ForeignKey("coupons.Coupon", null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
+    coupon_code = models.CharField(max_length=30, blank=True)
+    coupon_discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    delivery_charge = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    estimated_delivery = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.order_number
+
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey("products.Product", null=True, on_delete=models.SET_NULL, related_name="order_items")
+    product_name = models.CharField(max_length=200)  # purchase-time snapshot
+    original_price = models.DecimalField(max_digits=10, decimal_places=2)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)  # price actually charged
+    quantity = models.PositiveIntegerField()
+    line_total = models.DecimalField(max_digits=12, decimal_places=2)
+      # Product-wise GST Snapshot
+    hsn_code = models.CharField(
+        max_length=8,
+        blank=True,
+    )
+
+    gst_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
+    product_discount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    coupon_discount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    taxable_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    gst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    cgst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    sgst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    igst_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+class OrderStatusHistory(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="history")
+    status = models.CharField(max_length=20, choices=OrderStatus.choices)
+    note = models.CharField(max_length=200, blank=True)
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        verbose_name_plural = "order status history"
+
+
+class StockMovement(models.Model):
+    """Append-only audit trail of every stock change (lives here so products never depends on orders)."""
+
+    product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="stock_movements")
+    change = models.IntegerField(help_text="Positive = added, negative = removed")
+    stock_after = models.PositiveIntegerField()
+    reason = models.CharField(max_length=100)
+    order = models.ForeignKey(Order, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+
+========== backend\orders\services.py ==========
+
+
+from datetime import timedelta
+from decimal import Decimal, ROUND_HALF_UP
+
+from django.conf import settings
+from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
+from rest_framework.exceptions import NotFound, ValidationError
+
+from addresses.models import Address
+from cart.services import get_cart, remove_ordered_items_from_cart
+from coupons.models import Coupon
+from coupons.services import validate_coupon
+from notifications.models import Notification
+from notifications.services import notify
+from products.models import Product
+
+from .inventory import log_stock
+from .models import (
+    CANCELLABLE,
+    FLOW,
+    Order,
+    OrderItem,
+    OrderStatus,
+    OrderStatusHistory,
+    PaymentMethod,
+    PaymentStatus,
+    TaxType,
+)
+
+
+CENT = Decimal("0.01")
+HUNDRED = Decimal("100")
+
+
+def _money(value):
+    """Round a monetary value to two decimal places."""
+    return Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def delivery_charge_for(amount):
+    amount = _money(amount)
+    return (
+        Decimal("0.00")
+        if amount >= settings.FREE_DELIVERY_THRESHOLD
+        else _money(settings.DELIVERY_CHARGE)
+    )
+
+
+def _cart_lines(user, lock):
+    """Validate cart products and live stock."""
+    cart_items = list(get_cart(user).items.all())
+
+    if not cart_items:
+        raise ValidationError({"cart": "Your cart is empty."})
+
+    qs = Product.objects.filter(
+        id__in=[item.product_id for item in cart_items]
+    ).order_by("id")
+
+    products = {
+        product.id: product
+        for product in (qs.select_for_update() if lock else qs)
+    }
+
+    lines = []
+
+    for item in cart_items:
+        product = products.get(item.product_id)
+
+        if product is None or not product.is_active:
+            raise ValidationError({
+                "cart": "A product in your cart is no longer available."
+            })
+
+        if item.quantity > product.stock:
+            raise ValidationError({
+                "cart": (
+                    f"Only {product.stock} unit(s) of "
+                    f"'{product.name}' left in stock."
+                )
+            })
+
+        lines.append((product, item.quantity))
+
+    return lines
+
+
+def _allocate_amount(total, weights):
+    """
+    Allocate a monetary amount proportionally.
+    The final line receives the rounding remainder so allocations
+    always add up exactly to the original amount.
+    """
+    total = _money(total)
+
+    if not weights:
+        return []
+
+    total_weight = sum(weights, Decimal("0"))
+
+    if total_weight <= 0:
+        if total == 0:
+            return [Decimal("0.00") for _ in weights]
+
+        raise ValidationError({
+            "cart": "Unable to distribute the order discount or delivery fee."
+        })
+
+    allocations = []
+    allocated = Decimal("0.00")
+
+    for index, weight in enumerate(weights):
+        if index == len(weights) - 1:
+            value = _money(total - allocated)
+        else:
+            value = _money(total * weight / total_weight)
+            allocated += value
+
+        allocations.append(value)
+
+    return allocations
+
+
+def _tax_type_for_state(state):
+    """VELORA is registered in Tamil Nadu."""
+    normalized = (state or "").strip().casefold()
+    normalized = " ".join(normalized.replace(".", "").split())
+
+    if not normalized:
+        raise ValidationError({
+            "address": "The delivery address must contain a state."
+        })
+
+    tamil_nadu_names = {
+        "tamil nadu",
+        "tamilnadu",
+        "tn",
+    }
+
+    return (
+        TaxType.INTRA_STATE
+        if normalized in tamil_nadu_names
+        else TaxType.INTER_STATE
+    )
+
+
+def _totals(lines, user, coupon_code, lock, delivery_state=None):
+    """
+    Calculate product discount, coupon discount, delivery allocation,
+    taxable value and GST for every cart line.
+
+    Product prices are GST-exclusive.
+    """
+
+    if not lines:
+        raise ValidationError({"cart": "Your cart is empty."})
+
+    original_items_total = _money(sum(
+        (product.price * quantity for product, quantity in lines),
+        Decimal("0.00"),
+    ))
+
+    line_amounts = [
+        _money(product.effective_price * quantity)
+        for product, quantity in lines
+    ]
+
+    items_total = _money(sum(line_amounts, Decimal("0.00")))
+    product_discount = _money(original_items_total - items_total)
+
+    coupon = None
+    coupon_discount = Decimal("0.00")
+
+    if coupon_code:
+        coupon, coupon_discount = validate_coupon(
+            coupon_code,
+            user,
+            items_total,
+            lock=lock,
+        )
+        coupon_discount = _money(coupon_discount)
+
+    if coupon_discount < 0 or coupon_discount > items_total:
+        raise ValidationError({
+            "coupon": "The calculated coupon discount is invalid."
+        })
+
+    delivery = delivery_charge_for(items_total - coupon_discount)
+
+    # Allocate coupon discount proportionally across product lines.
+    coupon_allocations = _allocate_amount(
+        coupon_discount,
+        line_amounts,
+    )
+
+    discounted_line_amounts = [
+        _money(line_amount - coupon_share)
+        for line_amount, coupon_share in zip(
+            line_amounts,
+            coupon_allocations,
+        )
+    ]
+
+    # Delivery is included in the taxable value and allocated across
+    # the discounted product lines.
+    delivery_weights = discounted_line_amounts
+
+    if sum(delivery_weights, Decimal("0")) <= 0:
+        delivery_weights = line_amounts
+
+    delivery_allocations = _allocate_amount(
+        delivery,
+        delivery_weights,
+    )
+
+    tax_type = (
+        _tax_type_for_state(delivery_state)
+        if delivery_state is not None
+        else None
+    )
+
+    item_tax_details = []
+
+    taxable_amount = Decimal("0.00")
+    gst_amount = Decimal("0.00")
+    cgst_amount = Decimal("0.00")
+    sgst_amount = Decimal("0.00")
+    igst_amount = Decimal("0.00")
+
+    for index, (product, quantity) in enumerate(lines):
+        if product.gst_rate is None:
+            raise ValidationError({
+                "gst": (
+                    f"GST rate is missing for '{product.name}'. "
+                    "Update its GST rate in Django Admin before checkout."
+                )
+            })
+
+        gst_rate = Decimal(product.gst_rate)
+
+        if gst_rate < 0 or gst_rate > 100:
+            raise ValidationError({
+                "gst": f"Invalid GST rate configured for '{product.name}'."
+            })
+
+        taxable_value = _money(
+            discounted_line_amounts[index]
+            + delivery_allocations[index]
+        )
+
+        line_gst = _money(taxable_value * gst_rate / HUNDRED)
+
+        line_cgst = Decimal("0.00")
+        line_sgst = Decimal("0.00")
+        line_igst = Decimal("0.00")
+
+        if tax_type == TaxType.INTRA_STATE:
+            # Split the rounded GST amount, ensuring both components
+            # add up exactly to the line GST amount.
+            line_cgst = _money(line_gst / Decimal("2"))
+            line_sgst = _money(line_gst - line_cgst)
+
+        elif tax_type == TaxType.INTER_STATE:
+            line_igst = line_gst
+
+        taxable_amount += taxable_value
+        gst_amount += line_gst
+        cgst_amount += line_cgst
+        sgst_amount += line_sgst
+        igst_amount += line_igst
+
+        item_tax_details.append({
+            "product": product,
+            "quantity": quantity,
+            "line_amount": line_amounts[index],
+            "product_discount": _money(
+                (product.price * quantity) - line_amounts[index]
+            ),
+            "coupon_discount": coupon_allocations[index],
+            "delivery_allocation": delivery_allocations[index],
+            "taxable_value": taxable_value,
+            "hsn_code": product.hsn_code or "",
+            "gst_rate": gst_rate,
+            "gst_amount": line_gst,
+            "cgst_amount": line_cgst,
+            "sgst_amount": line_sgst,
+            "igst_amount": line_igst,
+        })
+
+    taxable_amount = _money(taxable_amount)
+    gst_amount = _money(gst_amount)
+    cgst_amount = _money(cgst_amount)
+    sgst_amount = _money(sgst_amount)
+    igst_amount = _money(igst_amount)
+
+    total_amount = _money(taxable_amount + gst_amount)
+
+    return {
+        "original_items_total": original_items_total,
+        "items_total": items_total,
+        "product_discount": product_discount,
+        "coupon": coupon,
+        "coupon_discount": coupon_discount,
+        "delivery_charge": delivery,
+        "taxable_amount": taxable_amount,
+        "gst_amount": gst_amount,
+        "cgst_amount": cgst_amount,
+        "sgst_amount": sgst_amount,
+        "igst_amount": igst_amount,
+        "tax_type": tax_type,
+        "total_amount": total_amount,
+        "item_tax_details": item_tax_details,
+    }
+
+
+def checkout_summary(user, coupon_code=None, address_id=None):
+    """
+    Calculate checkout preview.
+
+    Pass address_id to receive the correct CGST/SGST or IGST breakdown.
+    Without an address, the overall GST amount is still calculated,
+    but the state-wise tax split is left unspecified.
+    """
+    lines = _cart_lines(user, lock=False)
+
+    delivery_state = None
+
+    if address_id:
+        address = Address.objects.filter(
+            user=user,
+            pk=address_id,
+        ).first()
+
+        if not address:
+            raise ValidationError({
+                "address_id": "Select a valid delivery address."
+            })
+
+        delivery_state = address.state
+
+    totals = _totals(
+        lines,
+        user,
+        coupon_code,
+        lock=False,
+        delivery_state=delivery_state,
+    )
+
+    return {
+        "original_items_total": totals["original_items_total"],
+        "items_total": totals["items_total"],
+        "product_discount": totals["product_discount"],
+        "coupon_code": (
+            totals["coupon"].code if totals["coupon"] else ""
+        ),
+        "coupon_discount": totals["coupon_discount"],
+        "delivery_charge": totals["delivery_charge"],
+        "taxable_amount": totals["taxable_amount"],
+        "gst_amount": totals["gst_amount"],
+        "cgst_amount": totals["cgst_amount"],
+        "sgst_amount": totals["sgst_amount"],
+        "igst_amount": totals["igst_amount"],
+        "tax_type": totals["tax_type"],
+        "total_amount": totals["total_amount"],
+        "item_count": sum(quantity for _, quantity in lines),
+    }
+
+
+def _record(order, status, note="", by=None):
+    OrderStatusHistory.objects.create(
+        order=order,
+        status=status,
+        note=note,
+        changed_by=by,
+    )
+
+
+@transaction.atomic
+def place_order(user, address_id, payment_method, coupon_code=None):
+    lines = _cart_lines(user, lock=True)
+
+    address = Address.objects.filter(
+        user=user,
+        pk=address_id,
+    ).first()
+
+    if not address:
+        raise ValidationError({
+            "address_id": "Select a valid delivery address."
+        })
+
+    totals = _totals(
+        lines,
+        user,
+        coupon_code,
+        lock=True,
+        delivery_state=address.state,
+    )
+
+    cod = payment_method == PaymentMethod.COD
+
+    order = Order.objects.create(
+        user=user,
+        status=(
+            OrderStatus.PLACED
+            if cod
+            else OrderStatus.PENDING_PAYMENT
+        ),
+        payment_method=payment_method,
+        payment_status=PaymentStatus.PENDING,
+        address=address,
+        shipping_name=address.full_name,
+        shipping_phone=address.phone,
+        shipping_address=", ".join(filter(None, [
+            address.house_number,
+            address.street,
+            address.city,
+            address.state,
+            address.postal_code,
+            (
+                f"Note: {address.delivery_instructions}"
+                if address.delivery_instructions
+                else ""
+            ),
+        ])),
+
+        items_total=totals["items_total"],
+        original_items_total=totals["original_items_total"],
+        product_discount=totals["product_discount"],
+
+        coupon=totals["coupon"],
+        coupon_code=(
+            totals["coupon"].code if totals["coupon"] else ""
+        ),
+        coupon_discount=totals["coupon_discount"],
+
+        delivery_charge=totals["delivery_charge"],
+        taxable_amount=totals["taxable_amount"],
+        gst_amount=totals["gst_amount"],
+        cgst_amount=totals["cgst_amount"],
+        sgst_amount=totals["sgst_amount"],
+        igst_amount=totals["igst_amount"],
+        tax_type=totals["tax_type"],
+
+        total_amount=totals["total_amount"],
+        estimated_delivery=(
+            timezone.localdate()
+            + timedelta(days=settings.ESTIMATED_DELIVERY_DAYS)
+        ),
+    )
+
+    for detail in totals["item_tax_details"]:
+        product = detail["product"]
+        quantity = detail["quantity"]
+
+        OrderItem.objects.create(
+            order=order,
+            product=product,
+            product_name=product.name,
+            original_price=product.price,
+            unit_price=product.effective_price,
+            quantity=quantity,
+            line_total=detail["line_amount"],
+
+            # Snapshot GST information at order time.
+            hsn_code=detail["hsn_code"],
+            gst_rate=detail["gst_rate"],
+            product_discount=detail["product_discount"],
+            coupon_discount=detail["coupon_discount"],
+            taxable_value=detail["taxable_value"],
+            gst_amount=detail["gst_amount"],
+            cgst_amount=detail["cgst_amount"],
+            sgst_amount=detail["sgst_amount"],
+            igst_amount=detail["igst_amount"],
+        )
+
+        product.stock -= quantity
+        product.sold_count += quantity
+        product.save(update_fields=[
+            "stock",
+            "sold_count",
+            "updated_at",
+        ])
+
+        log_stock(product, -quantity, "Order placed", order)
+
+    if totals["coupon"]:
+        Coupon.objects.filter(
+            pk=totals["coupon"].pk
+        ).update(used_count=F("used_count") + 1)
+
+    if cod:
+        from payments.models import Payment, PaymentRecordStatus
+
+        Payment.objects.create(
+            order=order,
+            method=PaymentMethod.COD,
+            amount=totals["total_amount"],
+            status=PaymentRecordStatus.CREATED,
+        )
+
+        _record(
+            order,
+            OrderStatus.PLACED,
+            "Order placed (cash on delivery)",
+        )
+
+        notify(
+            user,
+            "Order placed",
+            f"Your order {order.order_number} has been placed.",
+            Notification.ORDER,
+            order,
+        )
+
+        remove_ordered_items_from_cart(order)
+
+    else:
+        _record(
+            order,
+            OrderStatus.PENDING_PAYMENT,
+            "Awaiting online payment",
+        )
+
+    return order
+
+
+def restock(order, reason):
+    """Return stock for every line of an order."""
+    items = list(
+        order.items.exclude(product=None).order_by("product_id")
+    )
+
+    products = {
+        product.id: product
+        for product in Product.objects.select_for_update()
+        .filter(id__in=[item.product_id for item in items])
+        .order_by("id")
+    }
+
+    for item in items:
+        product = products[item.product_id]
+
+        product.stock += item.quantity
+        product.sold_count = max(
+            0,
+            product.sold_count - item.quantity,
+        )
+
+        product.save(update_fields=[
+            "stock",
+            "sold_count",
+            "updated_at",
+        ])
+
+        log_stock(product, item.quantity, reason, order)
+
+
+@transaction.atomic
+def cancel_order(
+    order_id,
+    user=None,
+    note="Cancelled by customer",
+    by=None,
+):
+    qs = Order.objects.select_for_update()
+
+    if user is not None:
+        qs = qs.filter(user=user)
+
+    order = qs.filter(pk=order_id).first()
+
+    if not order:
+        raise NotFound("Order not found.")
+
+    if order.status not in CANCELLABLE:
+        raise ValidationError({
+            "detail": (
+                f"An order that is '{order.get_status_display()}' "
+                "can no longer be cancelled."
+            )
+        })
+
+    restock(order, "Order cancelled")
+
+    if order.coupon_id:
+        Coupon.objects.filter(
+            pk=order.coupon_id,
+            used_count__gt=0,
+        ).update(used_count=F("used_count") - 1)
+
+    if order.payment_status == PaymentStatus.PAID:
+        order.payment_status = PaymentStatus.REFUND_PENDING
+
+    from payments.models import Payment, PaymentRecordStatus
+
+    Payment.objects.filter(
+        order=order,
+        status=PaymentRecordStatus.CREATED,
+    ).update(status=PaymentRecordStatus.CANCELLED)
+
+    order.status = OrderStatus.CANCELLED
+
+    order.save(update_fields=[
+        "status",
+        "payment_status",
+        "updated_at",
+    ])
+
+    _record(order, OrderStatus.CANCELLED, note, by)
+
+    message = f"Your order {order.order_number} was cancelled."
+
+    if order.payment_status == PaymentStatus.REFUND_PENDING:
+        message += " Your refund will be processed."
+
+    notify(
+        order.user,
+        "Order cancelled",
+        message,
+        Notification.ORDER,
+        order,
+    )
+
+    return order
+
+
+_STATUS_MESSAGES = {
+    OrderStatus.CONFIRMED: ("Order confirmed", Notification.ORDER),
+    OrderStatus.PROCESSING: ("Order is being processed", Notification.ORDER),
+    OrderStatus.SHIPPED: ("Order shipped", Notification.SHIPPING),
+    OrderStatus.OUT_FOR_DELIVERY: (
+        "Out for delivery",
+        Notification.SHIPPING,
+    ),
+    OrderStatus.DELIVERED: ("Order delivered", Notification.DELIVERY),
+}
+
+
+@transaction.atomic
+def advance_status(order_id, new_status, by=None, note=""):
+    """Admin-driven forward transition through the delivery flow."""
+    order = Order.objects.select_for_update().get(pk=order_id)
+
+    if new_status not in FLOW:
+        raise ValidationError({"status": "Invalid target status."})
+
+    if order.status not in FLOW:
+        raise ValidationError({
+            "status": (
+                f"A '{order.get_status_display()}' order "
+                "cannot be advanced."
+            )
+        })
+
+    if FLOW.index(new_status) <= FLOW.index(order.status):
+        raise ValidationError({
+            "status": (
+                "Orders can only move forward through the delivery flow."
+            )
+        })
+
+    order.status = new_status
+    fields = ["status", "updated_at"]
+
+    if (
+        new_status == OrderStatus.DELIVERED
+        and order.payment_method == PaymentMethod.COD
+    ):
+        from payments.models import Payment, PaymentRecordStatus
+
+        order.payment_status = PaymentStatus.PAID
+        fields.append("payment_status")
+
+        Payment.objects.filter(
+            order=order,
+            method=PaymentMethod.COD,
+        ).update(status=PaymentRecordStatus.SUCCESS)
+
+    order.save(update_fields=fields)
+
+    _record(order, new_status, note, by)
+
+    title, kind = _STATUS_MESSAGES[new_status]
+
+    notify(
+        order.user,
+        title,
+        f"Order {order.order_number}: {OrderStatus(new_status).label}.",
+        kind,
+        order,
+    )
+
+    return order
+
+
+========== backend\orders\serializers.py ==========
+from rest_framework import serializers
+
+from .models import CANCELLABLE, FLOW, Order, OrderItem, OrderStatus, OrderStatusHistory, PaymentMethod
+
+
+class OrderItemSerializer(serializers.ModelSerializer):
+    thumbnail = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderItem
+        fields = ("id", "product", "product_name", "original_price", "unit_price", "quantity", "line_total", "thumbnail")
+
+    def get_thumbnail(self, obj):
+        if not obj.product_id:
+            return None
+        image = obj.product.images.first()
+        request = self.context.get("request")
+        return (request.build_absolute_uri(image.image.url) if request else image.image.url) if image else None
+
+
+class HistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderStatusHistory
+        fields = ("status", "note", "created_at")
+
+
+class OrderListSerializer(serializers.ModelSerializer):
+    item_count = serializers.SerializerMethodField()
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = Order
+        fields = ("id", "order_number", "status", "status_label", "payment_method", "payment_status", "total_amount", "item_count", "created_at")
+
+    def get_item_count(self, obj):
+        return sum(i.quantity for i in obj.items.all())
+
+
+class OrderDetailSerializer(OrderListSerializer):
+    items = OrderItemSerializer(many=True, read_only=True)
+    history = HistorySerializer(many=True, read_only=True)
+    can_cancel = serializers.SerializerMethodField()
+
+    class Meta(OrderListSerializer.Meta):
+        fields = OrderListSerializer.Meta.fields + (
+            "shipping_name", "shipping_phone", "shipping_address", "items_total", "coupon_code", "coupon_discount",
+            "delivery_charge", "estimated_delivery", "items", "history", "can_cancel",
+        )
+
+    def get_can_cancel(self, obj):
+        return obj.status in CANCELLABLE
+
+
+
+class CheckoutSerializer(serializers.Serializer):
+    address_id = serializers.IntegerField()
+    payment_method = serializers.ChoiceField(choices=PaymentMethod.choices)
+    coupon_code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=30
+    )
+
+
+class SummarySerializer(serializers.Serializer):
+    address_id = serializers.IntegerField()
+    coupon_code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=30
+    )
+
+def build_tracking(order):
+    """Timeline for the tracking screen: one entry per stage with completion state and timestamp."""
+    reached = {}
+    for h in order.history.all():
+        reached.setdefault(h.status, h.created_at)
+    current = order.status
+    cur_idx = FLOW.index(current) if current in FLOW else -1
+    stages = [
+        {"status": s.value, "label": s.label, "completed": i <= cur_idx, "current": i == cur_idx, "timestamp": reached.get(s.value)}
+        for i, s in enumerate(FLOW)
+    ]
+    return {
+        "order_number": order.order_number,
+        "status": current,
+        "status_label": OrderStatus(current).label,
+        "is_cancelled": current == OrderStatus.CANCELLED,
+        "awaiting_payment": current == OrderStatus.PENDING_PAYMENT,
+        "estimated_delivery": None if current in (OrderStatus.CANCELLED, OrderStatus.DELIVERED) else order.estimated_delivery,
+        "stages": stages,
+        "history": HistorySerializer(order.history.all(), many=True).data,
+    }
+
+
+========== backend\orders\views.py ==========
+from django.http import HttpResponse
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from . import services
+from .invoice import render_invoice_pdf
+from .models import Order
+from .serializers import (
+    CheckoutSerializer, OrderDetailSerializer, OrderListSerializer, SummarySerializer, build_tracking,
+)
+
+
+
+class CheckoutSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        s = SummarySerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+
+        return Response(
+            services.checkout_summary(
+                request.user,
+                coupon_code=s.validated_data.get("coupon_code"),
+                address_id=s.validated_data["address_id"],
+            )
+        )
+
+
+class CheckoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        s = CheckoutSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        order = services.place_order(request.user, **s.validated_data)
+        order = _queryset(request.user).get(pk=order.pk)
+        return Response(OrderDetailSerializer(order, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+def _queryset(user):
+    return Order.objects.filter(user=user).prefetch_related("items__product__images", "history")
+
+
+class OrderViewSet(viewsets.ReadOnlyModelViewSet):
+    
+    """Always scoped to the caller: other customers' orders return 404."""
+    permission_classes = [IsAuthenticated]
+    
+
+    def get_queryset(self):
+        return _queryset(self.request.user)
+
+    def get_serializer_class(self):
+        return OrderListSerializer if self.action == "list" else OrderDetailSerializer
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        order = services.cancel_order(pk, user=request.user)
+        order = self.get_queryset().get(pk=order.pk)
+        return Response(OrderDetailSerializer(order, context={"request": request}).data)
+
+    @action(detail=True, methods=["get"])
+    def tracking(self, request, pk=None):
+        return Response(build_tracking(self.get_object()))
+
+    @action(detail=True, methods=["get"])
+    def invoice(self, request, pk=None):
+        order = self.get_object()
+        if order.status == "PENDING_PAYMENT" or order.status == "CANCELLED":
+            raise ValidationError({"detail": "An invoice is available only for confirmed orders."})
+        pdf = render_invoice_pdf({
+            "order_number": order.order_number, "date": timezone.localtime(order.created_at).strftime("%d %b %Y"),
+            "customer": order.shipping_name, "shipping_address": order.shipping_address,
+            "payment_method": order.get_payment_method_display(), "payment_status": order.get_payment_status_display(),
+            "items": [{"name": i.product_name, "qty": i.quantity, "unit_price": i.unit_price, "line_total": i.line_total} for i in order.items.all()],
+            "items_total": order.items_total, "coupon_code": order.coupon_code, "coupon_discount": order.coupon_discount,
+            "delivery_charge": order.delivery_charge, "total_amount": order.total_amount,
+        })
+        resp = HttpResponse(pdf, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="invoice-{order.order_number}.pdf"'
+        return resp
+
+
+========== backend\orders\invoice.py ==========
+"""Invoice PDF generation. render_invoice_pdf() takes plain data so it can be tested without Django."""
+from io import BytesIO
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+
+def _money(v):
+    return f"Rs. {float(v):,.2f}"
+
+
+def render_invoice_pdf(data):
+    """data: order_number, date, customer, shipping_address, payment_method, payment_status,
+    items=[{name, qty, unit_price, line_total}], items_total, coupon_code, coupon_discount, delivery_charge, total_amount"""
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=18 * mm, bottomMargin=18 * mm,
+                            title=f"Invoice {data['order_number']}")
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("TAX INVOICE", styles["Title"]),
+        Paragraph(f"<b>Invoice / Order No:</b> {data['order_number']}<br/><b>Date:</b> {data['date']}", styles["Normal"]),
+        Spacer(1, 6 * mm),
+        Paragraph(f"<b>Billed to:</b> {data['customer']}<br/>{data['shipping_address']}", styles["Normal"]),
+        Spacer(1, 3 * mm),
+        Paragraph(f"<b>Payment:</b> {data['payment_method']} ({data['payment_status']})", styles["Normal"]),
+        Spacer(1, 6 * mm),
+    ]
+    rows = [["Item", "Qty", "Unit price", "Amount"]]
+    rows += [[Paragraph(i["name"], styles["Normal"]), i["qty"], _money(i["unit_price"]), _money(i["line_total"])] for i in data["items"]]
+    rows.append(["", "", "Items total", _money(data["items_total"])])
+    if float(data["coupon_discount"]) > 0:
+        rows.append(["", "", f"Coupon {data['coupon_code']}", "- " + _money(data["coupon_discount"])])
+    rows.append(["", "", "Delivery", _money(data["delivery_charge"])])
+    rows.append(["", "", "TOTAL", _money(data["total_amount"])])
+    n_items = len(data["items"])
+    table = Table(rows, colWidths=[85 * mm, 15 * mm, 35 * mm, 35 * mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#222222")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, n_items), 0.3, colors.grey),
+        ("FONTNAME", (2, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (2, n_items + 1), (-1, n_items + 1), 0.5, colors.black),
+    ]))
+    story += [table, Spacer(1, 10 * mm), Paragraph("Thank you for shopping with us.", styles["Italic"])]
+    doc.build(story)
+    return buf.getvalue()
+
+
+========== backend\payments\services.py ==========
+import hashlib
+import hmac
+import json
+import logging
+from decimal import ROUND_HALF_UP
+
+from django.conf import settings
+from django.db import transaction
+from rest_framework.exceptions import APIException, NotFound, ValidationError
+from cart.services import remove_ordered_items_from_cart
+from notifications.models import Notification
+from notifications.services import notify
+from orders.models import Order, OrderStatus, OrderStatusHistory, PaymentMethod, PaymentStatus
+
+from .models import Payment, PaymentRecordStatus, WebhookEvent
+
+log = logging.getLogger(__name__)
+
+
+class GatewayError(APIException):
+    status_code = 502
+    default_detail = "The payment gateway could not be reached. Please try again."
+
+
+class GatewayNotConfigured(APIException):
+    status_code = 503
+    default_detail = "Online payments are not configured on the server."
+
+
+def to_paise(amount):
+    return int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def razorpay_client():
+    if not (settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET):
+        raise GatewayNotConfigured()
+    import razorpay
+    return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+
+def _hmac_hex(secret, message):
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def verify_checkout_signature(razorpay_order_id, razorpay_payment_id, signature):
+    """Razorpay checkout signature = HMAC_SHA256(order_id + '|' + payment_id, key_secret)."""
+    if not settings.RAZORPAY_KEY_SECRET or not signature:
+        return False
+    expected = _hmac_hex(settings.RAZORPAY_KEY_SECRET, f"{razorpay_order_id}|{razorpay_payment_id}".encode())
+    return hmac.compare_digest(expected, signature)
+
+
+def verify_webhook_signature(body: bytes, signature):
+    """Webhook signature = HMAC_SHA256(raw request body, webhook_secret)."""
+    if not settings.RAZORPAY_WEBHOOK_SECRET or not signature:
+        return False
+    return hmac.compare_digest(_hmac_hex(settings.RAZORPAY_WEBHOOK_SECRET, body), signature)
+
+
+# ---------------------------------------------------------------- create
+@transaction.atomic
+def create_payment_order(user, order_id):
+    order = Order.objects.select_for_update().filter(pk=order_id, user=user).first()
+    if not order:
+        raise NotFound("Order not found.")
+    if order.payment_method != PaymentMethod.RAZORPAY:
+        raise ValidationError({"detail": "This order is not an online-payment order."})
+    if order.status != OrderStatus.PENDING_PAYMENT:
+        raise ValidationError({"detail": "This order is not awaiting payment."})
+
+    # Retry: reuse the same Razorpay order (Razorpay allows several attempts on one order).
+    payment = (
+        Payment.objects.select_for_update()
+        .filter(order=order, razorpay_order_id__isnull=False, amount=order.total_amount)
+        .exclude(status=PaymentRecordStatus.SUCCESS).first()
+    )
+    if not payment:
+        try:
+            rp_order = razorpay_client().order.create({
+                "amount": to_paise(order.total_amount), "currency": "INR", "receipt": order.order_number,
+                "payment_capture": 1, "notes": {"order_id": str(order.pk), "order_number": order.order_number},
+            })
+        except GatewayNotConfigured:
+            raise
+        except Exception:
+            log.exception("Razorpay order creation failed")
+            raise GatewayError()
+        payment = Payment.objects.create(
+            order=order, method=PaymentMethod.RAZORPAY, amount=order.total_amount, currency="INR",
+            razorpay_order_id=rp_order["id"],
+        )
+    elif payment.status != PaymentRecordStatus.CREATED:
+        payment.status = PaymentRecordStatus.CREATED
+        payment.failure_reason = ""
+        payment.save(update_fields=["status", "failure_reason", "updated_at"])
+    if order.payment_status != PaymentStatus.PENDING:
+        order.payment_status = PaymentStatus.PENDING
+        order.save(update_fields=["payment_status", "updated_at"])
+
+    return {
+        "key_id": settings.RAZORPAY_KEY_ID,  # public key id only; the secret never leaves the server
+        "razorpay_order_id": payment.razorpay_order_id,
+        "amount": to_paise(order.total_amount), "currency": "INR",
+        "order_id": order.pk, "order_number": order.order_number,
+        "name": "Shop", "description": f"Order {order.order_number}",
+        "prefill": {"name": user.first_name, "email": user.email, "contact": user.phone},
+    }
+
+
+# ---------------------------------------------------------------- state changes (caller holds the payment lock)
+def _lock_order(payment):
+    return Order.objects.select_for_update().get(pk=payment.order_id)
+
+
+def mark_success(payment, gateway_payment_id, signature="", instrument=""):
+    """Idempotent. Returns True only the first time it actually changes state."""
+    if payment.status == PaymentRecordStatus.SUCCESS:
+        if payment.razorpay_payment_id != gateway_payment_id:
+            log.warning("Second payment %s captured for already-paid payment %s - needs manual refund", gateway_payment_id, payment.pk)
+        return False
+    payment.status = PaymentRecordStatus.SUCCESS
+    payment.razorpay_payment_id = gateway_payment_id
+    payment.razorpay_signature = signature
+    payment.transaction_reference = gateway_payment_id
+    payment.instrument = instrument or payment.instrument
+    payment.failure_reason = ""
+    payment.save()
+
+    order = _lock_order(payment)
+    if order.status == OrderStatus.CANCELLED:
+        # Money arrived after the order was cancelled/expired: keep the order cancelled, flag for refund.
+        order.payment_status = PaymentStatus.REFUND_PENDING
+        order.save(update_fields=["payment_status", "updated_at"])
+        notify(order.user, "Payment received for a cancelled order",
+               f"Your payment for {order.order_number} will be refunded.", Notification.PAYMENT, order)
+        return True
+    order.payment_status = PaymentStatus.PAID
+    fields = ["payment_status", "updated_at"]
+    if order.status == OrderStatus.PENDING_PAYMENT:
+        order.status = OrderStatus.PLACED
+        fields.append("status")
+        OrderStatusHistory.objects.create(order=order, status=OrderStatus.PLACED, note="Payment confirmed")
+    order.save(update_fields=fields)
+    remove_ordered_items_from_cart(order)
+    notify(order.user, "Payment successful", f"We received your payment for order {order.order_number}.", Notification.PAYMENT, order)
+    notify(order.user, "Order placed", f"Your order {order.order_number} has been placed.", Notification.ORDER, order)
+    return True
+
+
+def mark_failed(payment, reason="Payment failed", status=PaymentRecordStatus.FAILED):
+    if payment.status == PaymentRecordStatus.SUCCESS:
+        return False  # never downgrade a confirmed payment
+    payment.status = status
+    payment.failure_reason = reason[:255]
+    payment.save(update_fields=["status", "failure_reason", "updated_at"])
+    order = _lock_order(payment)
+    if order.payment_status == PaymentStatus.PENDING and status == PaymentRecordStatus.FAILED:
+        order.payment_status = PaymentStatus.FAILED
+        order.save(update_fields=["payment_status", "updated_at"])
+        notify(order.user, "Payment failed", f"Payment for order {order.order_number} failed. You can retry.", Notification.PAYMENT, order)
+    return True
+
+
+def apply_gateway_payment(payment, gp, signature=""):
+    """Apply a Razorpay payment entity (fetched from the API, or from a signed webhook) to our records.
+    Validates order id, amount and currency first. Returns 'success' | 'failed' | 'pending'."""
+    if gp.get("order_id") != payment.razorpay_order_id:
+        raise ValidationError({"detail": "Payment does not belong to this order."})
+    if gp.get("amount") != to_paise(payment.amount) or gp.get("currency", "INR") != payment.currency:
+        log.error("Amount mismatch on payment %s: gateway=%s expected=%s", payment.pk, gp.get("amount"), to_paise(payment.amount))
+        raise ValidationError({"detail": "Payment amount does not match the order total."})
+    state = gp.get("status")
+    if state == "captured":
+        mark_success(payment, gp["id"], signature, gp.get("method", ""))
+        return "success"
+    if state == "failed":
+        mark_failed(payment, gp.get("error_description") or "Payment failed")
+        return "failed"
+    return "pending"
+
+
+# ---------------------------------------------------------------- verify (called by the app after checkout)
+def verify_payment(user, razorpay_order_id, razorpay_payment_id, razorpay_signature):
+    if not verify_checkout_signature(razorpay_order_id, razorpay_payment_id, razorpay_signature):
+        raise ValidationError({"detail": "Invalid payment signature."})
+    with transaction.atomic():
+        payment = (
+            Payment.objects.select_for_update().select_related("order")
+            .filter(razorpay_order_id=razorpay_order_id, order__user=user).first()
+        )
+        if not payment:
+            raise NotFound("Payment not found.")
+        if payment.status == PaymentRecordStatus.SUCCESS:
+            return payment, "success"  # duplicate callback
+        try:
+            gp = razorpay_client().payment.fetch(razorpay_payment_id)  # amount/status come from Razorpay, not the client
+        except GatewayNotConfigured:
+            raise
+        except Exception:
+            log.exception("Razorpay payment fetch failed")
+            raise GatewayError()
+        outcome = apply_gateway_payment(payment, gp, razorpay_signature)
+    payment.refresh_from_db()
+    return payment, outcome
+
+
+@transaction.atomic
+def report_client_event(user, razorpay_order_id, outcome, reason=""):
+    """The app tells us the customer closed checkout / saw a failure. Informational only:
+    it can mark a still-open attempt cancelled/failed but can NEVER mark anything paid."""
+    payment = Payment.objects.select_for_update().filter(razorpay_order_id=razorpay_order_id, order__user=user).first()
+    if not payment:
+        raise NotFound("Payment not found.")
+    if payment.status == PaymentRecordStatus.CREATED:
+        if outcome == "cancelled":
+            mark_failed(payment, "Cancelled by customer", PaymentRecordStatus.CANCELLED)
+        else:
+            mark_failed(payment, reason or "Payment failed")
+    return payment
+
+
+# ---------------------------------------------------------------- webhook
+def handle_webhook(raw_body: bytes, signature, event_id):
+    """Returns a short result string. Raises PermissionError on a bad signature."""
+    if not verify_webhook_signature(raw_body, signature):
+        raise PermissionError("bad signature")
+    event = json.loads(raw_body)
+    event_id = event_id or hashlib.sha256(raw_body).hexdigest()
+    with transaction.atomic():
+        record, created = WebhookEvent.objects.get_or_create(
+            event_id=event_id, defaults={"event": event.get("event", ""), "payload": event})
+        if not created and record.processed:
+            return "duplicate"
+        entity = (event.get("payload", {}).get("payment") or {}).get("entity")
+        note = "ignored"
+        if entity and entity.get("order_id") and event.get("event") in ("payment.captured", "order.paid", "payment.failed"):
+            payment = Payment.objects.select_for_update().filter(razorpay_order_id=entity["order_id"]).first()
+            if not payment:
+                note = "unknown order"
+            else:
+                try:
+                    note = apply_gateway_payment(payment, entity)
+                except ValidationError as exc:  # mismatch: record it, return 200 so Razorpay stops retrying
+                    note = f"rejected: {exc.detail}"[:255]
+        record.processed, record.note = True, note
+        record.save(update_fields=["processed", "note"])
+    return note
+
+
+# ---------------------------------------------------------------- refunds (admin action)
+def refund_order(order):
+    """Refund the successful Razorpay payment of an order in full. Returns a message string."""
+    payment = order.payments.filter(status=PaymentRecordStatus.SUCCESS, razorpay_payment_id__isnull=False).first()
+    if not payment or order.payment_status != PaymentStatus.REFUND_PENDING:
+        raise ValidationError("Order has no refund pending.")
+    try:
+        razorpay_client().payment.refund(payment.razorpay_payment_id, {"amount": to_paise(payment.amount)})
+    except Exception as exc:
+        log.exception("Refund failed")
+        raise GatewayError(f"Refund failed: {exc}")
+    order.payment_status = PaymentStatus.REFUNDED
+    order.save(update_fields=["payment_status", "updated_at"])
+    notify(order.user, "Refund initiated", f"Your refund for order {order.order_number} has been initiated.", Notification.PAYMENT, order)
+    return f"Refund initiated for {order.order_number}."
+
+
+========== backend\payments\views.py ==========
+import logging
+
+from rest_framework import generics, status
+from rest_framework.permissions import AllowAny,IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from . import services
+from .models import Payment
+from .serializers import (
+    CreatePaymentOrderSerializer, PaymentSerializer, ReportSerializer, VerifyPaymentSerializer,
+)
+
+log = logging.getLogger(__name__)
+
+
+class PaymentListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentSerializer
+
+    def get_queryset(self):
+        return Payment.objects.filter(order__user=self.request.user).select_related("order")
+
+
+class CreatePaymentOrderView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        s = CreatePaymentOrderSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        return Response(services.create_payment_order(request.user, s.validated_data["order_id"]))
+
+
+class VerifyPaymentView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        s = VerifyPaymentSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        payment, outcome = services.verify_payment(request.user, **s.validated_data)
+        body = {"status": outcome, "order_id": payment.order_id, "payment": PaymentSerializer(payment).data}
+        # 202: gateway has not captured yet; the signed webhook will finalise it
+        return Response(body, status=status.HTTP_202_ACCEPTED if outcome == "pending" else status.HTTP_200_OK)
+
+
+class ReportPaymentView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        s = ReportSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        payment = services.report_client_event(request.user, **s.validated_data)
+        return Response(PaymentSerializer(payment).data)
+
+class WebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        raw = request.body
+
+        try:
+            result = services.handle_webhook(
+                raw,
+                request.headers.get("X-Razorpay-Signature", ""),
+                request.headers.get("X-Razorpay-Event-Id", ""),
+            )
+
+        except PermissionError:
+            return Response(
+                {"detail": "Invalid signature."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except ValueError:
+            return Response(
+                {"detail": "Malformed payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({"result": result})
+
+
+
+========== mobile\src\api\services.ts ==========
+import api from './client';
+import type {
+  Address, AddressInput, AuthResponse, Banner, Cart, Category, CheckoutInput, CheckoutSummary, NotificationPage,
+  OrderDetail, OrderSummary, Paginated, PaymentRecord, ProductDetail, ProductQuery, ProductSummary,
+  RazorpayOrderResponse, Review, Tracking, User, VerifyResponse, WishlistItem,
+} from '@/types';
+
+const data = <T>(p: Promise<{ data: T }>) => p.then((r) => r.data);
+
+
+
+export const authApi = {
+
+  // ================================================
+  // LOGIN
+  // ================================================
+
+  login: (email: string, password: string) =>
+    data<{ access: string; refresh: string }>(
+      api.post('/auth/login/', {
+        email,
+        password,
+      })
+    ),
+
+  // ================================================
+  // REGISTER
+  // Email verification is required.
+  // Backend does not return JWT tokens here.
+  // ================================================
+
+  register: (body: {
+    email: string;
+    password: string;
+    first_name: string;
+    last_name?: string;
+    phone?: string;
+  }) =>
+    data<{
+      detail: string;
+      email_verification_required: boolean;
+      user: User;
+    }>(
+      api.post('/auth/register/', body)
+    ),
+
+  // ================================================
+  // VERIFY EMAIL
+  // ================================================
+
+  verifyEmail: (uid: string, token: string) =>
+    data<{ detail: string }>(
+      api.post('/auth/verify-email/', {
+        uid,
+        token,
+      })
+    ),
+
+  // ================================================
+  // LOGOUT
+  // ================================================
+
+  logout: (refresh: string) =>
+    api.post('/auth/logout/', {
+      refresh,
+    }),
+
+  // ================================================
+  // PROFILE
+  // ================================================
+
+  profile: () =>
+    data<User>(
+      api.get('/auth/profile/')
+    ),
+
+  updateProfile: (
+    body: Partial<
+      Pick<User, 'first_name' | 'last_name' | 'phone'>
+    >
+  ) =>
+    data<User>(
+      api.patch('/auth/profile/', body)
+    ),
+
+  // ================================================
+  // CHANGE PASSWORD
+  // ================================================
+
+  changePassword: (
+    old_password: string,
+    new_password: string
+  ) =>
+    api.post('/auth/change-password/', {
+      old_password,
+      new_password,
+    }),
+
+  // ================================================
+  // FORGOT PASSWORD
+  // ================================================
+
+  forgotPassword: (email: string) =>
+    api.post('/auth/forgot-password/', {
+      email,
+    }),
+
+  // ================================================
+  // RESET PASSWORD
+  // ================================================
+
+  resetPassword: (
+    uid: string,
+    token: string,
+    new_password: string
+  ) =>
+    api.post('/auth/reset-password/', {
+      uid,
+      token,
+      new_password,
+    }),
+
+};
+
+
+export const catalogApi = {
+  categories: () => data<Category[]>(api.get('/categories/')),
+  banners: () => data<Banner[]>(api.get('/banners/')),
+  products: (q: ProductQuery = {}) => data<Paginated<ProductSummary>>(api.get('/products/', { params: q })),
+  product: (id: number) => data<ProductDetail>(api.get(`/products/${id}/`)),
+  reviews: (id: number) => data<Paginated<Review>>(api.get(`/products/${id}/reviews/`)),
+  saveReview: (id: number, rating: number, comment: string) => data<Review>(api.post(`/products/${id}/reviews/`, { rating, comment })),
+};
+
+export const cartApi = {
+  get: () => data<Cart>(api.get('/cart/')),
+  add: (product_id: number, quantity = 1) => data<Cart>(api.post('/cart/add/', { product_id, quantity })),
+  update: (product_id: number, quantity: number) => data<Cart>(api.post('/cart/update/', { product_id, quantity })),
+  remove: (product_id: number) => data<Cart>(api.post('/cart/remove/', { product_id })),
+};
+
+export const wishlistApi = {
+  list: () => data<WishlistItem[]>(api.get('/wishlist/')),
+  add: (product_id: number) => api.post('/wishlist/add/', { product_id }),
+  remove: (product_id: number) => api.post('/wishlist/remove/', { product_id }),
+};
+
+export const addressApi = {
+  list: () => data<Address[]>(api.get('/addresses/')),
+  create: (body: AddressInput) => data<Address>(api.post('/addresses/', body)),
+  update: (id: number, body: Partial<AddressInput>) => data<Address>(api.patch(`/addresses/${id}/`, body)),
+  remove: (id: number) => api.delete(`/addresses/${id}/`),
+};
+
+export const orderApi = {
+  summary: (address_id: number, coupon_code?: string) =>
+  data<CheckoutSummary>(
+    api.post('/checkout/summary/', {
+      address_id,
+      coupon_code: coupon_code ?? '',
+    })
+  ),
+  checkout: (body: CheckoutInput) => data<OrderDetail>(api.post('/checkout/', body)),
+  validateCoupon: (code: string) => data<{ code: string; discount: string }>(api.post('/coupons/validate/', { code })),
+  list: (page = 1) => data<Paginated<OrderSummary>>(api.get('/orders/', { params: { page } })),
+  get: (id: number) => data<OrderDetail>(api.get(`/orders/${id}/`)),
+  cancel: (id: number) => data<OrderDetail>(api.post(`/orders/${id}/cancel/`)),
+  tracking: (id: number) => data<Tracking>(api.get(`/orders/${id}/tracking/`)),
+};
+
+export const paymentApi = {
+  createOrder: (order_id: number) => data<RazorpayOrderResponse>(api.post('/payments/create-order/', { order_id })),
+  verify: (body: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) =>
+    data<VerifyResponse>(api.post('/payments/verify/', body)),
+  report: (razorpay_order_id: string, outcome: 'cancelled' | 'failed', reason = '') =>
+    api.post('/payments/report/', { razorpay_order_id, outcome, reason }),
+  history: () => data<Paginated<PaymentRecord>>(api.get('/payments/')),
+};
+
+export const notificationApi = {
+  list: () => data<NotificationPage>(api.get('/notifications/')),
+  read: (id: number) => api.post(`/notifications/${id}/read/`),
+  readAll: () => api.post('/notifications/read-all/'),
+  registerDevice: (token: string) => api.post('/notifications/device-token/', { token }),
+};
+
+
+========== mobile\src\types\index.ts ==========
+export interface Paginated<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+}
+
+export interface User {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  date_joined: string;
+}
+export interface AuthResponse {
+  user: User;
+  access: string;
+  refresh: string;
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  slug: string;
+  image: string | null;
+  parent: number | null;
+  children: Category[];
+}
+export interface Banner {
+  id: number;
+  title: string;
+  image: string;
+  product: number | null;
+  category: number | null;
+}
+
+export interface ProductSummary {
+  id: number;
+  name: string;
+  slug: string;
+  category: number;
+  category_name: string;
+  price: string;
+  discount_price: string | null;
+  effective_price: string;
+  discount_percent: number;
+  stock: number;
+  in_stock: boolean;
+  is_low_stock: boolean;
+  avg_rating: string;
+  review_count: number;
+  thumbnail: string | null;
+}
+export interface ProductImage {
+  id: number;
+  image: string;
+  alt_text: string;
+}
+export interface ProductDetail extends ProductSummary {
+  description: string;
+  images: ProductImage[];
+  related: ProductSummary[];
+}
+export interface ProductQuery {
+  search?: string;
+  category?: number;
+  min_price?: string;
+  max_price?: string;
+  in_stock?: boolean;
+  featured?: boolean;
+  discounted?: boolean;
+  ordering?: string;
+  page?: number;
+}
+
+export interface Review {
+  id: number;
+  user_name: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+}
+
+export interface CartItem {
+  id: number;
+  product: ProductSummary;
+  quantity: number;
+  line_total: string;
+}
+export interface Cart {
+  items: CartItem[];
+  item_count: number;
+  subtotal: string;
+  discount: string;
+  total: string;
+  adjustments?: unknown[];
+}
+
+export interface WishlistItem {
+  id: number;
+  product: ProductSummary;
+  added_at: string;
+}
+
+export interface Address {
+  id: number;
+  full_name: string;
+  phone: string;
+  house_number: string;
+  street: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  delivery_instructions: string;
+  is_default: boolean;
+}
+export type AddressInput = Omit<Address, 'id'>;
+
+export type PaymentMethod = 'COD' | 'RAZORPAY';
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUND_PENDING' | 'REFUNDED';
+export type OrderStatus =
+  | 'PENDING_PAYMENT' | 'PLACED' | 'CONFIRMED' | 'PROCESSING' | 'SHIPPED' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+
+export interface OrderSummary {
+  id: number;
+  order_number: string;
+  status: OrderStatus;
+  status_label: string;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  total_amount: string;
+  item_count: number;
+  created_at: string;
+}
+export interface OrderItem {
+  id: number;
+  product: number | null;
+  product_name: string;
+  original_price: string;
+  unit_price: string;
+  quantity: number;
+  line_total: string;
+  thumbnail: string | null;
+}
+export interface OrderDetail extends OrderSummary {
+  shipping_name: string;
+  shipping_phone: string;
+  shipping_address: string;
+  items_total: string;
+  coupon_code: string;
+  coupon_discount: string;
+  delivery_charge: string;
+  estimated_delivery: string | null;
+  items: OrderItem[];
+  history: { status: OrderStatus; note: string; created_at: string }[];
+  can_cancel: boolean;
+}
+export interface TrackingStage {
+  status: OrderStatus;
+  label: string;
+  completed: boolean;
+  current: boolean;
+  timestamp: string | null;
+}
+export interface Tracking {
+  order_number: string;
+  status: OrderStatus;
+  status_label: string;
+  is_cancelled: boolean;
+  awaiting_payment: boolean;
+  estimated_delivery: string | null;
+  stages: TrackingStage[];
+  history: { status: OrderStatus; note: string; created_at: string }[];
+}
+export interface CheckoutSummary {
+  original_items_total: string;
+  items_total: string;
+  product_discount: string;
+  coupon_code: string;
+  coupon_discount: string;
+  delivery_charge: string;
+
+  taxable_amount: string;
+  gst_amount: string;
+  cgst_amount: string;
+  sgst_amount: string;
+  igst_amount: string;
+
+  tax_type: 'INTRA_STATE' | 'INTER_STATE';
+  total_amount: string;
+  item_count: number;
+}
+
+export interface CheckoutInput {
+  address_id: number;
+  payment_method: PaymentMethod;
+  coupon_code?: string;
+}
+
+export interface RazorpayOrderResponse {
+  key_id: string;
+  razorpay_order_id: string;
+  amount: number;
+  currency: string;
+  order_id: number;
+  order_number: string;
+  name: string;
+  description: string;
+  prefill: { name: string; email: string; contact: string };
+}
+export interface PaymentRecord {
+  id: number;
+  order: number;
+  order_number: string;
+  method: PaymentMethod;
+  instrument: string;
+  amount: string;
+  currency: string;
+  status: 'CREATED' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+  razorpay_payment_id: string | null;
+  failure_reason: string;
+  created_at: string;
+}
+export interface VerifyResponse {
+  status: 'success' | 'failed' | 'pending';
+  order_id: number;
+}
+
+export interface AppNotification {
+  id: number;
+  title: string;
+  message: string;
+  type: 'ORDER' | 'PAYMENT' | 'SHIPPING' | 'DELIVERY' | 'SYSTEM';
+  order: number | null;
+  is_read: boolean;
+  created_at: string;
+}
+export interface NotificationPage extends Paginated<AppNotification> {
+  unread_count: number;
+}
+
+
+========== mobile\src\hooks\useFetch.ts ==========
+
+
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+interface Options {
+  /** Reload silently every time the screen regains focus. */
+  refetchOnFocus?: boolean;
+
+  /** Poll interval in ms while the screen is focused. */
+  pollMs?: number;
+
+  /** Set false to prevent automatic fetching until enabled. */
+  enabled?: boolean;
+}
+
+export function useFetch<T>(
+  fetcher: () => Promise<T>,
+  deps: unknown[] = [],
+  opts: Options = {},
+) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
+
+  const mounted = useRef(true);
+  const firstFocus = useRef(true);
+
+  const enabled = opts.enabled !== false;
+
+  useEffect(() => {
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const load = useCallback(
+    async (mode: 'initial' | 'refresh' | 'silent' = 'initial') => {
+      if (!enabled) return;
+
+      if (mode === 'initial') setLoading(true);
+      if (mode === 'refresh') setRefreshing(true);
+
+      try {
+        const result = await fetcherRef.current();
+
+        if (!mounted.current) return;
+
+        setData(result);
+        setError(null);
+
+      } catch (e) {
+        if (mounted.current && mode !== 'silent') {
+          setError(
+            e instanceof Error
+              ? e.message
+              : 'Something went wrong',
+          );
+        }
+
+      } finally {
+        if (mounted.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [enabled],
+  );
+
+  // Fetch when dependencies change, but only when enabled.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (enabled) {
+      load('initial');
+    }
+  }, [...deps, enabled]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        enabled &&
+        opts.refetchOnFocus &&
+        !firstFocus.current
+      ) {
+        load('silent');
+      }
+
+      firstFocus.current = false;
+
+      if (!enabled || !opts.pollMs) {
+        return undefined;
+      }
+
+      const interval = setInterval(
+        () => load('silent'),
+        opts.pollMs,
+      );
+
+      return () => clearInterval(interval);
+
+    }, [load, enabled, opts.refetchOnFocus, opts.pollMs]),
+  );
+
+  return {
+    data,
+    setData,
+    loading,
+    refreshing,
+    error,
+    reload: () => load('initial'),
+    refresh: () => load('refresh'),
+  };
+}
+
+
+========== mobile\src\services\razorpay.ts ==========
+import { paymentApi } from '@/api/services';
+import type { RazorpayOrderResponse, User } from '@/types';
+
+export type PayOutcome =
+  | { status: 'success' | 'pending'; orderId: number }
+  | { status: 'failed' | 'cancelled' | 'unavailable'; orderId: number; reason: string };
+
+function getCheckout(): { open: (o: Record<string, unknown>) => Promise<any> } | null {
+  try {
+    // Native module: absent in Expo Go, present in a development build.
+    const mod = require('react-native-razorpay');
+    return mod?.default?.open ? mod.default : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Online payment flow (all trust decisions are made by the server):
+ * 1. server creates a Razorpay order  2. Razorpay Checkout opens  3. result is sent to /payments/verify/
+ * The app never decides a payment succeeded - it only reports what the server confirmed.
+ */
+export async function payOnline(orderId: number, user: User): Promise<PayOutcome> {
+  const checkout = getCheckout();
+  if (!checkout) {
+    return { status: 'unavailable', orderId, reason: 'Online payment needs the development build of the app (not Expo Go). You can still pay with Cash on Delivery.' };
+  }
+  let p: RazorpayOrderResponse;
+  try {
+    p = await paymentApi.createOrder(orderId);
+  } catch (e) {
+    // e.g. gateway not configured on the server, or the order is no longer awaiting payment
+    return { status: 'failed', orderId, reason: e instanceof Error ? e.message : 'Could not start the payment.' };
+  }
+  const options = {
+    key: p.key_id,
+    order_id: p.razorpay_order_id,
+    amount: p.amount,
+    currency: p.currency,
+    name: p.name,
+    description: p.description,
+    prefill: { name: p.prefill.name || user.first_name, email: p.prefill.email, contact: p.prefill.contact },
+    theme: { color: '#4F46E5' },
+  };
+  let result: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string };
+  try {
+    result = await checkout.open(options);
+  } catch (e: any) {
+    const description: string = e?.description ?? e?.error?.description ?? '';
+    const cancelled = e?.code === 0 || /cancel/i.test(description);
+    await paymentApi.report(p.razorpay_order_id, cancelled ? 'cancelled' : 'failed', description).catch(() => {});
+    return { status: cancelled ? 'cancelled' : 'failed', orderId, reason: description || (cancelled ? 'Payment cancelled' : 'Payment failed') };
+  }
+  try {
+    const verified = await paymentApi.verify(result);
+    if (verified.status === 'success' || verified.status === 'pending') return { status: verified.status, orderId };
+    return { status: 'failed', orderId, reason: 'The bank declined the payment.' };
+  } catch (e: any) {
+    // Money may have been taken but we could not confirm: tell the user honestly, the webhook can still finalise it.
+    return { status: 'pending', orderId };
+  }
+}
+
+
+========== mobile\src\screens\shop\CheckoutScreen.tsx ==========
+
+
+import React, { useEffect, useState } from 'react';
+
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  StyleSheet,
+} from 'react-native';
+
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+import Animated, {
+  FadeIn,
+  FadeInDown,
+} from 'react-native-reanimated';
+
+import { TextInput } from 'react-native-paper';
+
+import { addressApi, orderApi } from '@/api/services';
+
+import {
+  AddressCard,
+  CustomButton,
+  EmptyState,
+  ErrorMessage,
+  LoadingIndicator,
+  PriceSummary,
+} from '@/components';
+
+import {
+  colors,
+  typography,
+  spacing,
+  radius,
+  shadows,
+} from '@/constants/theme';
+
+import { useAuth } from '@/context/AuthContext';
+import { useCart } from '@/context/CartContext';
+import { useToast } from '@/context/ToastContext';
+
+import { useFetch } from '@/hooks/useFetch';
+import { useNav } from '@/navigation/hooks';
+
+import { payOnline } from '@/services/razorpay';
+
+import type { PaymentMethod } from '@/types';
+
+import { errorMessage } from '@/utils/forms';
+import { formatINR } from '@/utils/format';
+
+// ======================================================
+// PAYMENT METHODS
+// ======================================================
+
+const METHODS: {
+  value: PaymentMethod;
+  title: string;
+  text: string;
+  icon: string;
+}[] = [
+  {
+    value: 'RAZORPAY',
+    title: 'Pay Online',
+    text: 'UPI, debit/credit card, net banking via Razorpay',
+    icon: 'credit-card-outline',
+  },
+  {
+    value: 'COD',
+    title: 'Cash on Delivery',
+    text: 'Pay in cash when your order arrives',
+    icon: 'cash',
+  },
+];
+
+// ======================================================
+// SECTION HEADING
+// ======================================================
+
+function SectionTitle({
+  n,
+  title,
+  subtitle,
+}: {
+  n: number;
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <Animated.View
+      entering={FadeInDown.duration(350)}
+      style={styles.sectionHeading}
+    >
+      <View style={styles.sectionNumber}>
+        <Text style={styles.sectionNumberText}>
+          {n}
+        </Text>
+      </View>
+
+      <View style={styles.sectionHeadingText}>
+        <Text style={styles.sectionTitle}>
+          {title}
+        </Text>
+
+        {!!subtitle && (
+          <Text style={styles.sectionSubtitle}>
+            {subtitle}
+          </Text>
+        )}
+      </View>
+    </Animated.View>
+  );
+}
+
+// ======================================================
+// PAYMENT METHOD CARD
+// ======================================================
+
+function PaymentMethodCard({
+  method,
+  selected,
+  onPress,
+  index,
+}: {
+  method: (typeof METHODS)[number];
+  selected: boolean;
+  onPress: () => void;
+  index: number;
+}) {
+  return (
+    <Animated.View
+      entering={FadeInDown
+        .delay(index * 100)
+        .duration(400)}
+    >
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="radio"
+        accessibilityState={{ selected }}
+        style={({ pressed }) => [
+          styles.paymentCard,
+          selected && styles.paymentCardSelected,
+          pressed && styles.paymentCardPressed,
+        ]}
+      >
+        <View
+          style={[
+            styles.paymentIcon,
+            selected && styles.paymentIconSelected,
+          ]}
+        >
+          <MaterialCommunityIcons
+            name={method.icon as any}
+            size={27}
+            color={
+              selected
+                ? colors.primary
+                : colors.muted
+            }
+          />
+        </View>
+
+        <View style={styles.paymentTextContainer}>
+          <Text
+            style={[
+              styles.paymentTitle,
+              selected && styles.paymentTitleSelected,
+            ]}
+          >
+            {method.title}
+          </Text>
+
+          <Text style={styles.paymentDescription}>
+            {method.text}
+          </Text>
+        </View>
+
+        <MaterialCommunityIcons
+          name={
+            selected
+              ? 'radiobox-marked'
+              : 'radiobox-blank'
+          }
+          size={25}
+          color={
+            selected
+              ? colors.primary
+              : colors.muted
+          }
+        />
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// ======================================================
+// VELORA CHECKOUT SCREEN
+// ======================================================
+
+export default function CheckoutScreen() {
+  const nav = useNav();
+  const toast = useToast();
+
+  const { user } = useAuth();
+
+  const { refresh: refreshCart } = useCart();
+
+  // ====================================================
+  // ADDRESS API
+  // ====================================================
+
+  const addresses = useFetch(
+    addressApi.list,
+    [],
+    { refetchOnFocus: true },
+  );
+
+  // ====================================================
+  // ADDRESS STATE
+  // ====================================================
+
+  const [addressId, setAddressId] =
+    useState<number | null>(null);
+
+  // ====================================================
+  // PAYMENT STATE
+  // ====================================================
+
+  const [method, setMethod] =
+    useState<PaymentMethod>('RAZORPAY');
+
+  // ====================================================
+  // COUPON STATE
+  // ====================================================
+
+  const [couponInput, setCouponInput] = useState('');
+  const [coupon, setCoupon] = useState('');
+  const [couponError, setCouponError] = useState('');
+  const [applying, setApplying] = useState(false);
+
+  // ====================================================
+  // ORDER STATE
+  // ====================================================
+
+  const [placing, setPlacing] = useState(false);
+
+  // ====================================================
+  // CHECKOUT SUMMARY API
+  // Address and coupon changes refresh the summary.
+  // ====================================================
+
+  const summary = useFetch(
+    () => orderApi.summary(addressId!, coupon || undefined),
+    [addressId, coupon],
+    {
+      refetchOnFocus: true,
+      enabled: addressId !== null,
+    },
+  );
+
+  // ====================================================
+  // AUTO SELECT DEFAULT ADDRESS
+  // ====================================================
+
+  useEffect(() => {
+    const list = addresses.data;
+
+    if (!list?.length) {
+      setAddressId(null);
+      return;
+    }
+
+    const selectedAddressExists = list.some(
+      (address) => address.id === addressId,
+    );
+
+    if (addressId === null || !selectedAddressExists) {
+      const selectedAddress =
+        list.find((address) => address.is_default) ??
+        list[0];
+
+      setAddressId(selectedAddress.id);
+    }
+  }, [addresses.data, addressId]);
+
+  // ====================================================
+  // APPLY COUPON
+  // ====================================================
+
+  const applyCoupon = async () => {
+    if (!couponInput.trim() || applying) return;
+
+    setApplying(true);
+    setCouponError('');
+
+    try {
+      const response = await orderApi.validateCoupon(
+        couponInput.trim(),
+      );
+
+      setCoupon(response.code);
+
+      toast.show(
+        `Coupon ${response.code} applied`,
+        'success',
+      );
+
+    } catch (error) {
+      setCouponError(errorMessage(error));
+
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  // ====================================================
+  // REMOVE COUPON
+  // ====================================================
+
+  const removeCoupon = () => {
+    setCoupon('');
+    setCouponInput('');
+    setCouponError('');
+  };
+
+  // ====================================================
+  // PLACE ORDER
+  // ====================================================
+
+  const placeOrder = async () => {
+    if (placing) return;
+
+    if (addressId === null) {
+      toast.show(
+        'Please select a delivery address',
+        'error',
+      );
+      return;
+    }
+
+    if (!summary.data) {
+      toast.show(
+        'Please wait for the order summary.',
+        'error',
+      );
+      return;
+    }
+
+    if (!user) {
+      toast.show(
+        'Please log in to continue.',
+        'error',
+      );
+      return;
+    }
+
+    setPlacing(true);
+
+    try {
+      // ----------------------------------------------
+      // CREATE ORDER
+      // Backend recalculates all prices and GST.
+      // ----------------------------------------------
+
+      const order = await orderApi.checkout({
+        address_id: addressId,
+        payment_method: method,
+        coupon_code: coupon || undefined,
+      });
+
+      // ----------------------------------------------
+      // CASH ON DELIVERY
+      // ----------------------------------------------
+
+      if (method === 'COD') {
+        await refreshCart();
+
+        nav.replace('PaymentResult', {
+          status: 'success',
+          orderId: order.id,
+          method,
+        });
+
+        return;
+      }
+
+      // ----------------------------------------------
+      // RAZORPAY PAYMENT
+      // Uses the order created by the backend.
+      // ----------------------------------------------
+
+      const outcome = await payOnline(
+        order.id,
+        user,
+      );
+
+      // ----------------------------------------------
+      // REFRESH CART AFTER SUCCESS
+      // ----------------------------------------------
+
+      if (outcome.status === 'success') {
+        await refreshCart();
+      }
+
+      // ----------------------------------------------
+      // PAYMENT RESULT
+      // ----------------------------------------------
+
+      nav.replace('PaymentResult', {
+        status: outcome.status,
+        orderId: order.id,
+        reason:
+          'reason' in outcome
+            ? outcome.reason
+            : undefined,
+        method,
+      });
+
+    } catch (error) {
+      console.error(
+        '[CHECKOUT] Order or payment error:',
+        error,
+      );
+
+      toast.show(
+        errorMessage(error),
+        'error',
+      );
+
+      summary.reload();
+
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  // ====================================================
+  // ADDRESS LOADING
+  // ====================================================
+
+  if (addresses.loading) {
+    return <LoadingIndicator />;
+  }
+
+  // ====================================================
+  // ADDRESS ERROR
+  // ====================================================
+
+  if (addresses.error) {
+    return (
+      <ErrorMessage
+        message={addresses.error}
+        onRetry={addresses.reload}
+      />
+    );
+  }
+
+  // ====================================================
+  // SUMMARY LOADING
+  // Only load after selecting an address.
+  // ====================================================
+
+  if (addressId !== null && summary.loading) {
+    return <LoadingIndicator />;
+  }
+
+  // ====================================================
+  // SUMMARY ERROR
+  // ====================================================
+
+  if (addressId !== null && summary.error) {
+    return (
+      <ErrorMessage
+        message={summary.error}
+        onRetry={summary.reload}
+      />
+    );
+  }
+
+  // ====================================================
+  // CHECKOUT DATA
+  // ====================================================
+
+  const addressList = addresses.data ?? [];
+
+  const s = summary.data;
+
+  // ====================================================
+  // GST BREAKDOWN ROWS
+  // ====================================================
+
+  const gstRows = s
+    ? s.tax_type === 'INTRA_STATE'
+      ? [
+          {
+            label: 'CGST',
+            value: s.cgst_amount,
+          },
+          {
+            label: 'SGST',
+            value: s.sgst_amount,
+          },
+        ]
+      : [
+          {
+            label: 'IGST',
+            value: s.igst_amount,
+          },
+        ]
+    : [];
+
+  // ====================================================
+  // ORDER PRICE BREAKDOWN
+  // ====================================================
+
+  const priceRows = s
+    ? [
+        {
+          label: `Items (${s.item_count})`,
+          value: s.original_items_total,
+        },
+
+        ...(Number(s.product_discount) > 0
+          ? [
+              {
+                label: 'Product Discount',
+                value: s.product_discount,
+                negative: true,
+              },
+            ]
+          : []),
+
+        ...(Number(s.coupon_discount) > 0
+          ? [
+              {
+                label: `Coupon ${s.coupon_code}`,
+                value: s.coupon_discount,
+                negative: true,
+              },
+            ]
+          : []),
+
+        {
+          label: 'Delivery',
+          value: s.delivery_charge,
+        },
+
+        {
+          label: 'Taxable Amount',
+          value: s.taxable_amount,
+        },
+
+        ...gstRows,
+
+        {
+          label: 'Total Payable',
+          value: s.total_amount,
+          bold: true,
+        },
+      ]
+    : [];
+
+  // ====================================================
+  // MAIN UI
+  // ====================================================
+
+  return (
+    <View style={styles.container}>
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+
+        {/* CHECKOUT HEADER */}
+
+        <Animated.View
+          entering={FadeInDown.duration(450)}
+          style={styles.pageHeader}
+        >
+          <View style={styles.pageHeaderIcon}>
+            <MaterialCommunityIcons
+              name="cart-check"
+              size={27}
+              color={colors.primary}
+            />
+          </View>
+
+          <View style={styles.pageHeaderText}>
+            <Text style={styles.pageTitle}>
+              Secure Checkout
+            </Text>
+
+            <Text style={styles.pageSubtitle}>
+              Complete your order with VELORA.
+            </Text>
+          </View>
+        </Animated.View>
+
+        {/* STEP 1 — DELIVERY ADDRESS */}
+
+        <SectionTitle
+          n={1}
+          title="Delivery Address"
+          subtitle="Where should we deliver your order?"
+        />
+
+        {addressList.length > 0 ? (
+          <View style={styles.addressList}>
+            {addressList.map((address, index) => (
+              <Animated.View
+                key={address.id}
+                entering={FadeInDown
+                  .delay(index * 75)
+                  .duration(400)}
+              >
+                <AddressCard
+                  address={address}
+                  selected={address.id === addressId}
+                  onPress={() => setAddressId(address.id)}
+                />
+              </Animated.View>
+            ))}
+          </View>
+        ) : (
+          <EmptyState
+            icon="map-marker-plus-outline"
+            title="No Saved Address"
+            subtitle="Add your delivery address to continue."
+          />
+        )}
+
+        <View style={styles.addAddressContainer}>
+          <CustomButton
+            label="Add New Address"
+            mode="outlined"
+            icon="plus"
+            onPress={() => nav.navigate('AddressForm')}
+            style={styles.addAddressButton}
+          />
+        </View>
+
+        {/* STEP 2 — PAYMENT METHOD */}
+
+        <SectionTitle
+          n={2}
+          title="Payment Method"
+          subtitle="Choose how you want to pay."
+        />
+
+        {METHODS.map((payment, index) => (
+          <PaymentMethodCard
+            key={payment.value}
+            method={payment}
+            index={index}
+            selected={method === payment.value}
+            onPress={() => setMethod(payment.value)}
+          />
+        ))}
+
+        {/* STEP 3 — COUPON */}
+
+        <SectionTitle
+          n={3}
+          title="Apply Coupon"
+          subtitle="Have a discount code? Use it here."
+        />
+
+        {coupon ? (
+          <Animated.View
+            entering={FadeInDown.duration(350)}
+            style={styles.appliedCoupon}
+          >
+            <View style={styles.couponIcon}>
+              <MaterialCommunityIcons
+                name="ticket-percent"
+                size={25}
+                color={colors.success}
+              />
+            </View>
+
+            <View style={styles.appliedCouponText}>
+              <Text style={styles.appliedCouponCode}>
+                {coupon}
+              </Text>
+
+              <Text style={styles.appliedCouponSubtitle}>
+                Coupon applied successfully
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={removeCoupon}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Remove coupon"
+            >
+              <MaterialCommunityIcons
+                name="close-circle"
+                size={25}
+                color={colors.danger}
+              />
+            </Pressable>
+          </Animated.View>
+        ) : (
+          <Animated.View
+            entering={FadeInDown.duration(350)}
+            style={styles.couponContainer}
+          >
+            <View style={styles.couponInputContainer}>
+              <TextInput
+                mode="outlined"
+                label="Enter Coupon Code"
+                value={couponInput}
+                onChangeText={(text) => {
+                  setCouponInput(text.toUpperCase());
+                  setCouponError('');
+                }}
+                autoCapitalize="characters"
+                error={!!couponError}
+                outlineColor={colors.border}
+                activeOutlineColor={colors.primary}
+                textColor={colors.text}
+                style={styles.couponInput}
+                contentStyle={styles.couponInputText}
+                left={
+                  <TextInput.Icon
+                    icon="ticket-percent-outline"
+                  />
+                }
+              />
+            </View>
+
+            <CustomButton
+              label="Apply"
+              mode="contained-tonal"
+              onPress={applyCoupon}
+              loading={applying}
+              disabled={!couponInput.trim() || applying}
+              style={styles.applyButton}
+            />
+          </Animated.View>
+        )}
+
+        {!!couponError && (
+          <Text style={styles.couponError}>
+            {couponError}
+          </Text>
+        )}
+
+        {/* STEP 4 — ORDER SUMMARY */}
+
+        <SectionTitle
+          n={4}
+          title="Order Summary"
+          subtitle="Review your payment before placing the order."
+        />
+
+        {s ? (
+          <Animated.View
+            entering={FadeInDown.delay(200).duration(450)}
+            style={styles.summaryCard}
+          >
+            <View style={styles.summaryHeader}>
+              <MaterialCommunityIcons
+                name="receipt-text-outline"
+                size={25}
+                color={colors.primary}
+              />
+
+              <Text style={styles.summaryTitle}>
+                Payment Breakdown
+              </Text>
+            </View>
+
+            <PriceSummary rows={priceRows} />
+
+            <View style={styles.taxNote}>
+              <MaterialCommunityIcons
+                name="information-outline"
+                size={18}
+                color={colors.primary}
+              />
+
+              <Text style={styles.taxNoteText}>
+                {s.tax_type === 'INTRA_STATE'
+                  ? 'CGST and SGST apply to this Tamil Nadu delivery.'
+                  : 'IGST applies to this interstate delivery.'}
+              </Text>
+            </View>
+
+            <View style={styles.secureNote}>
+              <MaterialCommunityIcons
+                name="shield-check"
+                size={20}
+                color={colors.success}
+              />
+
+              <Text style={styles.secureText}>
+                Your order and payment details are securely processed.
+              </Text>
+            </View>
+          </Animated.View>
+        ) : (
+          <View style={styles.noSummaryCard}>
+            <MaterialCommunityIcons
+              name="map-marker-outline"
+              size={30}
+              color={colors.muted}
+            />
+
+            <Text style={styles.noSummaryTitle}>
+              Select a delivery address
+            </Text>
+
+            <Text style={styles.noSummaryText}>
+              Your GST and payment breakdown will appear after selecting an address.
+            </Text>
+          </View>
+        )}
+
+        <View style={{ height: spacing.lg }} />
+
+      </ScrollView>
+
+      {/* STICKY CHECKOUT BUTTON */}
+
+      <Animated.View
+        entering={FadeIn.duration(350)}
+        style={styles.bottomCheckout}
+      >
+        <View style={styles.bottomTotalContainer}>
+          <Text style={styles.bottomTotalLabel}>
+            Total Amount
+          </Text>
+
+          <Text style={styles.bottomTotal}>
+            {s ? formatINR(s.total_amount) : '—'}
+          </Text>
+        </View>
+
+        <View style={styles.placeOrderButton}>
+          <CustomButton
+            label={
+              placing
+                ? 'Processing...'
+                : method === 'COD'
+                  ? 'Place Order'
+                  : 'Pay & Place Order'
+            }
+            icon={
+              method === 'COD'
+                ? 'check-circle-outline'
+                : 'lock-check'
+            }
+            onPress={placeOrder}
+            loading={placing}
+            disabled={
+              addressId === null ||
+              !s ||
+              summary.loading ||
+              placing
+            }
+            style={styles.checkoutButton}
+          />
+        </View>
+      </Animated.View>
+
+    </View>
+  );
+}
+
+// ======================================================
+// VELORA PREMIUM CHECKOUT STYLES
+// ======================================================
+
+const styles = StyleSheet.create({
+
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+
+  // Page heading
+
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+
+  pageHeaderIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  pageHeaderText: {
+    flex: 1,
+  },
+
+  pageTitle: {
+    color: colors.primaryDark,
+    fontSize: typography.fontSize.xxl,
+    fontWeight: '800',
+  },
+
+  pageSubtitle: {
+    color: colors.muted,
+    fontSize: typography.fontSize.sm,
+    lineHeight: typography.lineHeight.normal,
+    marginTop: 3,
+  },
+
+  // Section headings
+
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.xl,
+    marginBottom: spacing.md,
+    gap: spacing.md,
+  },
+
+  sectionNumber: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.small,
+  },
+
+  sectionNumberText: {
+    color: colors.white,
+    fontSize: typography.fontSize.md,
+    fontWeight: '800',
+  },
+
+  sectionHeadingText: {
+    flex: 1,
+  },
+
+  sectionTitle: {
+    color: colors.primaryDark,
+    fontSize: typography.fontSize.lg,
+    fontWeight: '800',
+  },
+
+  sectionSubtitle: {
+    color: colors.muted,
+    fontSize: typography.fontSize.xs,
+    marginTop: 3,
+  },
+
+  // Address list
+
+  addressList: {
+    gap: spacing.sm,
+  },
+
+  addAddressContainer: {
+    marginTop: spacing.sm,
+  },
+
+  addAddressButton: {
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+  },
+
+  // Payment card
+
+  paymentCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    marginBottom: spacing.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    gap: spacing.md,
+    ...shadows.small,
+  },
+
+  paymentCardSelected: {
+    backgroundColor: colors.surfaceGreen,
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
+
+  paymentCardPressed: {
+    opacity: 0.8,
+  },
+
+  paymentIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  paymentIconSelected: {
+    backgroundColor: colors.primaryLight,
+  },
+
+  paymentTextContainer: {
+    flex: 1,
+  },
+
+  paymentTitle: {
+    color: colors.text,
+    fontSize: typography.fontSize.md,
+    fontWeight: '800',
+  },
+
+  paymentTitleSelected: {
+    color: colors.primaryDark,
+  },
+
+  paymentDescription: {
+    color: colors.muted,
+    fontSize: typography.fontSize.xs,
+    lineHeight: typography.lineHeight.normal,
+    marginTop: spacing.xs,
+  },
+
+  // Coupon
+
+  couponContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+
+  couponInputContainer: {
+    flex: 1,
+  },
+
+  couponInput: {
+    backgroundColor: colors.card,
+  },
+
+  couponInputText: {
+    fontSize: typography.fontSize.md,
+  },
+
+  applyButton: {
+    marginTop: 5,
+  },
+
+  couponError: {
+    color: colors.danger,
+    fontSize: typography.fontSize.sm,
+    marginTop: spacing.sm,
+  },
+
+  appliedCoupon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.md,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    gap: spacing.md,
+  },
+
+  couponIcon: {
+    width: 43,
+    height: 43,
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  appliedCouponText: {
+    flex: 1,
+  },
+
+  appliedCouponCode: {
+    color: colors.success,
+    fontSize: typography.fontSize.md,
+    fontWeight: '800',
+  },
+
+  appliedCouponSubtitle: {
+    color: colors.muted,
+    fontSize: typography.fontSize.xs,
+    marginTop: 3,
+  },
+
+  // Summary
+
+  summaryCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.small,
+  },
+
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+
+  summaryTitle: {
+    color: colors.primaryDark,
+    fontSize: typography.fontSize.lg,
+    fontWeight: '800',
+  },
+
+  taxNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+  },
+
+  taxNoteText: {
+    flex: 1,
+    color: colors.primaryDark,
+    fontSize: typography.fontSize.xs,
+    lineHeight: typography.lineHeight.normal,
+  },
+
+  noSummaryCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.sm,
+  },
+
+  noSummaryTitle: {
+    color: colors.primaryDark,
+    fontSize: typography.fontSize.md,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
+  noSummaryText: {
+    color: colors.muted,
+    fontSize: typography.fontSize.sm,
+    textAlign: 'center',
+    lineHeight: typography.lineHeight.normal,
+  },
+
+  secureNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+
+  secureText: {
+    flex: 1,
+    color: colors.muted,
+    fontSize: typography.fontSize.xs,
+    lineHeight: typography.lineHeight.normal,
+  },
+
+  // Sticky bottom checkout
+
+  bottomCheckout: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingBottom: spacing.lg,
+    gap: spacing.md,
+    ...shadows.medium,
+  },
+
+  bottomTotalContainer: {
+    flex: 1,
+  },
+
+  bottomTotalLabel: {
+    color: colors.muted,
+    fontSize: typography.fontSize.xs,
+    fontWeight: '600',
+  },
+
+  bottomTotal: {
+    color: colors.primaryDark,
+    fontSize: typography.fontSize.xl,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+
+  placeOrderButton: {
+    flex: 1.5,
+  },
+
+  checkoutButton: {
+    borderRadius: radius.md,
+  },
+
+});
+
+
+========== mobile\src\components\PriceSummary.tsx ==========
+import React from 'react';
+import { Text, View } from 'react-native';
+import { colors } from '@/constants/theme';
+import { formatINR } from '@/utils/format';
+
+interface Row {
+  label: string;
+  value: string | number;
+  negative?: boolean;
+  free?: boolean;
+  bold?: boolean;
+}
+
+export default function PriceSummary({ rows }: { rows: Row[] }) {
+  return (
+    <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: colors.border }}>
+      {rows.map((r, i) => (
+        <View key={r.label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, ...(r.bold && i > 0 ? { borderTopWidth: 1, borderTopColor: colors.border, marginTop: 6, paddingTop: 10 } : {}) }}>
+          <Text style={{ color: r.bold ? colors.text : colors.muted, fontWeight: r.bold ? '700' : '400', fontSize: r.bold ? 16 : 14 }}>{r.label}</Text>
+          <Text style={{ color: r.negative || r.free ? colors.success : colors.text, fontWeight: r.bold ? '700' : '500', fontSize: r.bold ? 16 : 14 }}>
+            {r.free && Number(r.value) === 0 ? 'FREE' : `${r.negative ? '- ' : ''}${formatINR(r.value)}`}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+
+========== mobile\src\utils\format.ts ==========
+export const formatINR = (value: string | number | null | undefined): string => {
+  const n = Number(value ?? 0);
+  return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+export const formatDate = (iso?: string | null): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+export const formatDateTime = (iso?: string | null): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${formatDate(iso)}, ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+};

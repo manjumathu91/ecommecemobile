@@ -1,0 +1,326 @@
+VELORA CART GST AUDIT
+
+
+========== backend\cart\services.py ==========
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+
+from products.models import Product
+
+from .models import Cart, CartItem
+
+
+def get_cart(user):
+    cart, _ = Cart.objects.get_or_create(user=user)
+    return cart
+
+
+def _lock_product(product_id):
+    try:
+        return Product.objects.select_for_update().get(pk=product_id, is_active=True)
+    except Product.DoesNotExist:
+        raise ValidationError({"product_id": "Product not found or unavailable."})
+
+
+@transaction.atomic
+def add_item(user, product_id, quantity):
+    product = _lock_product(product_id)
+    cart = get_cart(user)
+    item = CartItem.objects.filter(cart=cart, product=product).first()
+    new_qty = (item.quantity if item else 0) + quantity
+    if new_qty > product.stock:
+        raise ValidationError({"quantity": f"Only {product.stock} unit(s) of '{product.name}' in stock."})
+    if item:
+        item.quantity = new_qty
+        item.save(update_fields=["quantity"])
+    else:
+        CartItem.objects.create(cart=cart, product=product, quantity=new_qty)
+    return cart
+
+
+@transaction.atomic
+def set_quantity(user, product_id, quantity):
+    product = _lock_product(product_id)
+    cart = get_cart(user)
+    item = CartItem.objects.filter(cart=cart, product=product).first()
+    if not item:
+        raise ValidationError({"product_id": "Item is not in your cart."})
+    if quantity > product.stock:
+        raise ValidationError({"quantity": f"Only {product.stock} unit(s) of '{product.name}' in stock."})
+    item.quantity = quantity
+    item.save(update_fields=["quantity"])
+    return cart
+
+
+@transaction.atomic
+def remove_item(user, product_id):
+    cart = get_cart(user)
+    CartItem.objects.filter(cart=cart, product_id=product_id).delete()
+    return cart
+
+
+@transaction.atomic
+def merge_guest_cart(user, items):
+    """Merge a guest (on-device) cart into the MySQL cart after login.
+    Quantities are capped at available stock; anything adjusted is reported back."""
+    cart = get_cart(user)
+    adjustments = []
+    for entry in items:
+        try:
+            product = Product.objects.select_for_update().get(pk=entry["product_id"], is_active=True)
+        except Product.DoesNotExist:
+            adjustments.append({"product_id": entry["product_id"], "reason": "unavailable"})
+            continue
+        existing = CartItem.objects.filter(cart=cart, product=product).first()
+        wanted = (existing.quantity if existing else 0) + entry["quantity"]
+        final = min(wanted, product.stock)
+        if final < 1:
+            adjustments.append({"product_id": product.id, "reason": "out_of_stock"})
+            continue
+        if final < wanted:
+            adjustments.append({"product_id": product.id, "reason": "capped_to_stock", "quantity": final})
+        if existing:
+            existing.quantity = final
+            existing.save(update_fields=["quantity"])
+        else:
+            CartItem.objects.create(cart=cart, product=product, quantity=final)
+    return cart, adjustments
+@transaction.atomic
+def remove_ordered_items_from_cart(order):
+    """
+    Remove only the quantities purchased in this order.
+    Preserve any additional quantities added while payment was pending.
+    """
+    cart = Cart.objects.select_for_update().filter(
+        user_id=order.user_id
+    ).first()
+
+    if cart is None:
+        return
+
+    for ordered_item in order.items.all():
+        if ordered_item.product_id is None:
+            continue
+
+        cart_item = CartItem.objects.select_for_update().filter(
+            cart=cart,
+            product_id=ordered_item.product_id,
+        ).first()
+
+        if cart_item is None:
+            continue
+
+        remaining = cart_item.quantity - ordered_item.quantity
+
+        if remaining > 0:
+            cart_item.quantity = remaining
+            cart_item.save(update_fields=["quantity"])
+        else:
+            cart_item.delete()
+
+
+========== backend\cart\serializers.py ==========
+from rest_framework import serializers
+
+from products.serializers import ProductListSerializer
+
+from .models import Cart, CartItem
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    product = ProductListSerializer(read_only=True)
+    line_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = CartItem
+        fields = ("id", "product", "quantity", "line_total")
+
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    discount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    item_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cart
+        fields = ("items", "item_count", "subtotal", "discount", "total")
+
+    def get_item_count(self, obj):
+        return sum(i.quantity for i in obj.items.all())
+
+
+class CartAddSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1, default=1)
+
+
+class CartUpdateSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class CartRemoveSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+
+
+class CartMergeSerializer(serializers.Serializer):
+    items = CartAddSerializer(many=True)
+
+
+========== backend\cart\views.py ==========
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from . import services
+from .models import Cart
+from .serializers import (
+    CartAddSerializer, CartMergeSerializer, CartRemoveSerializer, CartSerializer, CartUpdateSerializer,
+)
+
+
+def _render(request, cart, **extra):
+    cart = Cart.objects.prefetch_related("items__product__images", "items__product__category").get(pk=cart.pk)
+    return Response({**CartSerializer(cart, context={"request": request}).data, **extra})
+
+
+class CartView(APIView):
+    def get(self, request):
+        return _render(request, services.get_cart(request.user))
+
+
+class CartAddView(APIView):
+    def post(self, request):
+        s = CartAddSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        return _render(request, services.add_item(request.user, **s.validated_data))
+
+
+class CartUpdateView(APIView):
+    def post(self, request):
+        s = CartUpdateSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        return _render(request, services.set_quantity(request.user, **s.validated_data))
+
+
+class CartRemoveView(APIView):
+    def post(self, request):
+        s = CartRemoveSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        return _render(request, services.remove_item(request.user, s.validated_data["product_id"]))
+
+
+class CartMergeView(APIView):
+    def post(self, request):
+        s = CartMergeSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        cart, adjustments = services.merge_guest_cart(request.user, s.validated_data["items"])
+        return _render(request, cart, adjustments=adjustments)
+
+
+========== mobile\src\context\CartContext.tsx ==========
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { cartApi } from '@/api/services';
+import type { Cart } from '@/types';
+import { useAuth } from './AuthContext';
+import { useToast } from './ToastContext';
+
+interface CartApi {
+  cart: Cart | null;
+  count: number;
+  refresh: () => Promise<void>;
+  add: (productId: number, qty?: number) => Promise<boolean>;
+  setQty: (productId: number, qty: number) => Promise<boolean>;
+  remove: (productId: number) => Promise<boolean>;
+}
+const CartContext = createContext<CartApi>(null as unknown as CartApi);
+export const useCart = () => useContext(CartContext);
+
+export function CartProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const toast = useToast();
+  const [cart, setCart] = useState<Cart | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setCart(await cartApi.get()); // the cart lives in MySQL, so it is restored after login/app restart
+    } catch {
+      /* shown by the screen that needs it */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) refresh();
+    else setCart(null);
+  }, [user, refresh]);
+
+  const run = useCallback(
+    async (fn: () => Promise<Cart>, okMessage?: string) => {
+      try {
+        setCart(await fn());
+        if (okMessage) toast.show(okMessage, 'success');
+        return true;
+      } catch (e) {
+        toast.show(e instanceof Error ? e.message : 'Could not update cart', 'error');
+        return false;
+      }
+    },
+    [toast],
+  );
+
+  const value = useMemo<CartApi>(
+    () => ({
+      cart,
+      count: cart?.item_count ?? 0,
+      refresh,
+      add: (id, qty = 1) => run(() => cartApi.add(id, qty), 'Added to cart'),
+      setQty: (id, qty) => run(() => cartApi.update(id, qty)),
+      remove: (id) => run(() => cartApi.remove(id), 'Removed from cart'),
+    }),
+    [cart, refresh, run],
+  );
+  return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
+}
+
+
+========== mobile\src\components\CartItemRow.tsx ==========
+import React from 'react';
+import { Image, Pressable, Text, View } from 'react-native';
+import { IconButton } from 'react-native-paper';
+import { MEDIA_FALLBACK } from '@/constants/config';
+import { colors } from '@/constants/theme';
+import type { CartItem } from '@/types';
+import { formatINR } from '@/utils/format';
+import QuantityStepper from './QuantityStepper';
+
+interface Props {
+  item: CartItem;
+  busy?: boolean;
+  onQuantity: (q: number) => void;
+  onRemove: () => void;
+  onPress: () => void;
+}
+
+export default function CartItemRow({ item, busy, onQuantity, onRemove, onPress }: Props) {
+  const p = item.product;
+  return (
+    <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: 12, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
+      <Pressable onPress={onPress}>
+        <Image source={{ uri: p.thumbnail ?? MEDIA_FALLBACK }} style={{ width: 84, height: 84, borderRadius: 10, backgroundColor: '#F1F5F9' }} />
+      </Pressable>
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <Text numberOfLines={2} style={{ flex: 1, fontWeight: '600', color: colors.text }}>{p.name}</Text>
+          <IconButton icon="trash-can-outline" size={20} iconColor={colors.danger} onPress={onRemove} style={{ margin: -6 }} />
+        </View>
+        <Text style={{ color: colors.muted, fontSize: 12 }}>{formatINR(p.effective_price)} each</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+          <QuantityStepper value={item.quantity} max={p.stock} onChange={onQuantity} disabled={busy} />
+          <Text style={{ fontWeight: '700', color: colors.text }}>{formatINR(item.line_total)}</Text>
+        </View>
+        {item.quantity >= p.stock && <Text style={{ color: colors.warning, fontSize: 11, marginTop: 2 }}>Maximum available quantity</Text>}
+      </View>
+    </View>
+  );
+}

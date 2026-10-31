@@ -11,7 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
-
+import AIAssistantButton from '@/components/AIAssistantButton';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -603,7 +603,12 @@ export default function HomeScreen() {
           onClose={() => setDrawerVisible(false)}
         />
       </Modal>
-
+        
+        <AIAssistantButton
+  onPress={() => {
+    nav.navigate('AIChat');
+  }}
+/>
     </SafeAreaView>
   );
 }

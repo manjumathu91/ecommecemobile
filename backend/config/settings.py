@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "payments",
     "notifications",
     "reviews",
+    'ai_agent',
 ]
 
 MIDDLEWARE = [

@@ -85,6 +85,11 @@ export type RootStackParamList = {
   // ----------------------------------------------
 
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
+    // ----------------------------------------------
+  // AI ASSISTANT
+  // ----------------------------------------------
+
+  AIChat: undefined;
 
   // ----------------------------------------------
   // PRODUCTS

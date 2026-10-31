@@ -1,7 +1,7 @@
 
 
 import React, { useEffect, useState } from 'react';
-
+import AIChatScreen from '@/screens/shop/AIChatScreen';
 import {
   Modal,
   Pressable,
@@ -497,6 +497,14 @@ export default function RootNavigator() {
                 headerShown: false,
               }}
             />
+            <Stack.Screen
+  name="AIChat"
+  component={AIChatScreen}
+  options={{
+    title: 'VELORA AI Assistant',
+    headerShown: true,
+  }}
+/>
 
             <Stack.Screen
               name="ProductList"
