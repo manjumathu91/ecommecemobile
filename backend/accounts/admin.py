@@ -1,19 +1,50 @@
 
 
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from django.contrib.auth.forms import UserCreationForm, UserChangeForm
+from django.contrib.auth.forms import ReadOnlyPasswordHashField
 
 from .models import User
 
 
-class CustomUserCreationForm(UserCreationForm):
+class CustomUserCreationForm(forms.ModelForm):
+    password1 = forms.CharField(
+        label="Password",
+        widget=forms.PasswordInput,
+    )
+    password2 = forms.CharField(
+        label="Confirm Password",
+        widget=forms.PasswordInput,
+    )
+
     class Meta:
         model = User
-        fields = ("email",)
+        fields = ("email", "first_name", "last_name", "phone")
+
+    def clean_password2(self):
+        password1 = self.cleaned_data.get("password1")
+        password2 = self.cleaned_data.get("password2")
+
+        if password1 and password2 and password1 != password2:
+            raise forms.ValidationError("Passwords do not match.")
+
+        return password2
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.set_password(self.cleaned_data["password1"])
+
+        if commit:
+            user.save()
+            self.save_m2m()
+
+        return user
 
 
-class CustomUserChangeForm(UserChangeForm):
+class CustomUserChangeForm(forms.ModelForm):
+    password = ReadOnlyPasswordHashField()
+
     class Meta:
         model = User
         fields = "__all__"
@@ -23,6 +54,7 @@ class CustomUserChangeForm(UserChangeForm):
 class CustomUserAdmin(UserAdmin):
     form = CustomUserChangeForm
     add_form = CustomUserCreationForm
+    model = User
 
     ordering = ("-date_joined",)
 
@@ -36,7 +68,6 @@ class CustomUserAdmin(UserAdmin):
     )
 
     search_fields = ("email", "first_name", "last_name", "phone")
-
     list_filter = ("is_staff", "is_superuser", "is_active")
 
     fieldsets = (
@@ -59,6 +90,15 @@ class CustomUserAdmin(UserAdmin):
     add_fieldsets = (
         (None, {
             "classes": ("wide",),
-            "fields": ("email", "password1", "password2"),
+            "fields": (
+                "email",
+                "first_name",
+                "last_name",
+                "phone",
+                "password1",
+                "password2",
+            ),
         }),
     )
+
+    readonly_fields = ("last_login", "date_joined")
