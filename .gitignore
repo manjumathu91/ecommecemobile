@@ -10,4 +10,7 @@ node_modules/
 dist/
 *.log
 certs/
+*.pembackend/staticfiles/
+
 *.pem
+/backend/staticfiles/
