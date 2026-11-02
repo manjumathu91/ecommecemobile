@@ -6,7 +6,9 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import ReadOnlyPasswordHashField
 
 from .models import User
+import logging
 
+logger = logging.getLogger(__name__)
 
 class CustomUserCreationForm(forms.ModelForm):
     password1 = forms.CharField(
@@ -102,3 +104,17 @@ class CustomUserAdmin(UserAdmin):
     )
 
     readonly_fields = ("last_login", "date_joined")
+    
+    def add_view(self, request, form_url="", extra_context=None):
+        try:
+            return super().add_view(request, form_url, extra_context)
+        except Exception:
+            logger.exception("VELORA ADMIN USER ADD ERROR")
+            raise
+
+    def changelist_view(self, request, extra_context=None):
+        try:
+            return super().changelist_view(request, extra_context)
+        except Exception:
+            logger.exception("VELORA ADMIN USER LIST ERROR")
+            raise
