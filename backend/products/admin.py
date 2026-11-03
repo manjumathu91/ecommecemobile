@@ -1,6 +1,5 @@
-
-
 from django.contrib import admin
+from core.admin_site import shop_admin_site
 from django.db.models import F
 
 from orders.inventory import log_stock
@@ -37,7 +36,7 @@ class LowStockFilter(admin.SimpleListFilter):
         return queryset
 
 
-@admin.register(Product)
+
 class ProductAdmin(admin.ModelAdmin):
 
     list_display = (
@@ -147,7 +146,6 @@ class ProductAdmin(admin.ModelAdmin):
             )
 
 
-@admin.register(StockMovement)
 class StockMovementAdmin(admin.ModelAdmin):
 
     list_display = (
@@ -173,7 +171,7 @@ class StockMovementAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(Banner)
+
 class BannerAdmin(admin.ModelAdmin):
 
     list_display = (
@@ -186,3 +184,8 @@ class BannerAdmin(admin.ModelAdmin):
         "position",
         "is_active",
     )
+
+
+shop_admin_site.register(Product, ProductAdmin)
+shop_admin_site.register(StockMovement, StockMovementAdmin)
+shop_admin_site.register(Banner, BannerAdmin)

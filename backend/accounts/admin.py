@@ -2,6 +2,7 @@
 
 from django import forms
 from django.contrib import admin
+from core.admin_site import shop_admin_site
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import ReadOnlyPasswordHashField
 
@@ -52,7 +53,6 @@ class CustomUserChangeForm(forms.ModelForm):
         fields = "__all__"
 
 
-@admin.register(User)
 class CustomUserAdmin(UserAdmin):
     form = CustomUserChangeForm
     add_form = CustomUserCreationForm
@@ -118,3 +118,5 @@ class CustomUserAdmin(UserAdmin):
         except Exception:
             logger.exception("VELORA ADMIN USER LIST ERROR")
             raise
+
+shop_admin_site.register(User, CustomUserAdmin)

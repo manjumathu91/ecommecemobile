@@ -1,86 +1,36 @@
 
 {% extends "admin/index.html" %}
+{% load static %}
+
+{% block title %}Velora Dashboard{% endblock %}
 
 {% block extrastyle %}
 {{ block.super }}
 
 <style>
-/* =========================================
-   SHOP ADMIN DASHBOARD - PROFESSIONAL UI
-========================================= */
-
-#main {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: stretch !important;
-    width: 100% !important;
-    min-height: calc(100vh - 60px);
-}
-
-#nav-sidebar.shop-sidebar {
-    display: flex !important;
-    flex-direction: column !important;
-    flex: 0 0 250px !important;
-    width: 250px !important;
-    min-width: 250px !important;
-    min-height: calc(100vh - 60px);
-    padding: 22px 14px !important;
-    margin: 0 !important;
-    box-sizing: border-box !important;
-    background: #172b24 !important;
-    border: none !important;
-    overflow-y: auto !important;
-    position: relative !important;
-    visibility: visible !important;
-}
-
-#main > .content {
-    flex: 1 1 auto !important;
-    width: auto !important;
-    min-width: 0 !important;
-    max-width: none !important;
-    margin: 0 !important;
-    padding: 0 !important;
+:root {
+    --navy: #171D30;
+    --navy-light: #252F49;
+    --gold: #D9AE59;
+    --gold-soft: #F8F0DE;
+    --bg: #F5F6FA;
+    --text: #252D40;
+    --muted: #8991A3;
+    --border: #E8EAF0;
+    --white: #FFFFFF;
 }
 
 #content {
-    padding: 20px !important;
-    width: auto !important;
-    max-width: none !important;
-    margin: 0 !important;
-    box-sizing: border-box !important;
+    background: var(--bg);
 }
 
-
-
-
-/* =========================================
-   DASHBOARD DESIGN
-========================================= */
-
-.shop-dashboard {
-    --sd-bg: #f4f7fb;
-    --sd-card: #ffffff;
-    --sd-text: #172033;
-    --sd-muted: #718096;
-    --sd-border: #e7edf5;
-    --sd-primary: #3b82f6;
-    --sd-radius: 14px;
-
-    color: var(--sd-text);
-    font-family: inherit;
+.dashboard-wrapper {
     width: 100%;
-    max-width: 1500px;
-    margin: 0 auto 30px;
+    color: var(--text);
+    font-family: "Segoe UI", Arial, sans-serif;
 }
 
-.shop-dashboard * {
-    box-sizing: border-box;
-}
-
-/* HEADER */
-
-.shop-dashboard .dashboard-header {
+.dashboard-heading {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -89,463 +39,398 @@
     margin-bottom: 25px;
 }
 
-.shop-dashboard .header-title h1 {
-    font-size: 27px;
-    font-weight: 750;
-    margin: 0 0 6px;
-    color: var(--sd-text);
+.dashboard-heading h1 {
+    margin: 0 0 6px !important;
+    font-size: 26px !important;
+    font-weight: 750 !important;
+    color: var(--navy) !important;
 }
 
-.shop-dashboard .header-title p {
-    color: var(--sd-muted);
+.dashboard-heading p {
     margin: 0;
+    color: var(--muted);
     font-size: 13px;
 }
 
-.shop-dashboard .header-status {
-    background: #eaf8ef;
-    color: #16834a;
-    padding: 8px 14px;
-    border-radius: 30px;
+.dashboard-date {
+    background: white;
+    border: 1px solid var(--border);
+    padding: 10px 15px;
+    border-radius: 9px;
+    color: var(--navy);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
 }
 
-/* KPI GRID */
+/* Statistics cards */
 
-.shop-dashboard .stats-grid {
+.stats-grid {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 15px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
     margin-bottom: 25px;
 }
 
-.shop-dashboard .stat-card {
-    background: var(--sd-card);
-    border: 1px solid var(--sd-border);
-    border-radius: var(--sd-radius);
+.stat-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 12px;
     padding: 19px;
     min-width: 0;
-    box-shadow: 0 3px 12px rgba(20, 40, 80, 0.035);
-    transition: transform .2s ease, box-shadow .2s ease;
+    box-shadow: 0 3px 12px rgba(25,35,55,.035);
+    transition: .2s ease;
 }
 
-.shop-dashboard .stat-card:hover {
+.stat-card:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 22px rgba(20, 40, 80, 0.08);
+    box-shadow: 0 7px 18px rgba(25,35,55,.08);
 }
 
-.shop-dashboard .stat-top {
+.stat-top {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 8px;
+    margin-bottom: 17px;
 }
 
-.shop-dashboard .stat-label {
-    color: var(--sd-muted);
+.stat-label {
+    color: var(--muted);
     font-size: 12px;
-    font-weight: 650;
-}
-
-.shop-dashboard .stat-icon {
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    font-size: 17px;
-}
-
-.shop-dashboard .stat-value {
-    display: block;
-    font-size: 24px;
-    font-weight: 800;
-    margin-top: 13px;
-    color: var(--sd-text);
-    overflow-wrap: anywhere;
-}
-
-.shop-dashboard .stat-note {
-    font-size: 11px;
-    color: var(--sd-muted);
-    margin-top: 5px;
-}
-
-.shop-dashboard .blue-icon {
-    background: #eaf2ff;
-    color: #3478e5;
-}
-
-.shop-dashboard .green-icon {
-    background: #e7f8ef;
-    color: #159957;
-}
-
-.shop-dashboard .purple-icon {
-    background: #f0eaff;
-    color: #8254d9;
-}
-
-.shop-dashboard .orange-icon {
-    background: #fff2df;
-    color: #e58a16;
-}
-
-.shop-dashboard .red-icon {
-    background: #ffebeb;
-    color: #dc4444;
-}
-
-/* SECTION */
-
-.shop-dashboard .section-card {
-    background: var(--sd-card);
-    border: 1px solid var(--sd-border);
-    border-radius: var(--sd-radius);
-    padding: 21px;
-    min-width: 0;
-    box-shadow: 0 3px 12px rgba(20, 40, 80, 0.035);
-}
-
-.shop-dashboard .section-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 19px;
-}
-
-.shop-dashboard .section-heading h2 {
-    font-size: 16px;
-    font-weight: 750;
-    color: var(--sd-text);
-    margin: 0;
-}
-
-.shop-dashboard .section-heading p {
-    font-size: 11px;
-    color: var(--sd-muted);
-    margin: 5px 0 0;
-}
-
-/* CHART GRID */
-
-.shop-dashboard .charts-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
-    margin-bottom: 22px;
-}
-
-.shop-dashboard .chart-card {
-    min-width: 0;
-}
-
-.shop-dashboard .chart-card.full-width {
-    grid-column: 1 / -1;
-}
-
-.shop-dashboard .chart-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-
-.shop-dashboard .chart-table td {
-    padding: 9px 5px;
-    border-bottom: 1px solid #f0f2f6;
-    color: var(--sd-muted);
-}
-
-.shop-dashboard .chart-table tr:last-child td {
-    border-bottom: none;
-}
-
-.shop-dashboard .chart-label {
-    width: 115px;
-    white-space: nowrap;
-    color: var(--sd-text) !important;
     font-weight: 600;
 }
 
-.shop-dashboard .chart-bar-cell {
-    width: 45%;
-}
-
-.shop-dashboard .bar-track {
-    width: 100%;
-    height: 10px;
-    background: #edf2f8;
-    border-radius: 20px;
-    overflow: hidden;
-}
-
-.shop-dashboard .bar-fill {
-    width: 0;
-    height: 100%;
-    min-width: 2px;
-    border-radius: 20px;
-    transition: width .3s ease;
-}
-
-.shop-dashboard .daily-bar {
-    background: linear-gradient(90deg, #60a5fa, #2563eb);
-}
-
-.shop-dashboard .weekly-bar {
-    background: linear-gradient(90deg, #a78bfa, #7c3aed);
-}
-
-.shop-dashboard .monthly-bar {
-    background: linear-gradient(90deg, #38bdf8, #0284c7);
-}
-
-.shop-dashboard .chart-value {
-    text-align: right;
-    white-space: nowrap;
-    color: var(--sd-text) !important;
-    font-weight: 650;
-    font-size: 11px;
-}
-
-/* LOWER GRID */
-
-.shop-dashboard .data-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
-    margin-bottom: 22px;
-}
-
-.shop-dashboard .data-grid .wide-card {
-    grid-column: 1 / -1;
-}
-
-/* DATA TABLES */
-
-.shop-dashboard .data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-
-.shop-dashboard .data-table th {
-    text-align: left;
-    padding: 12px 9px;
-    color: #718096;
-    background: #f7f9fc;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    border-bottom: 1px solid var(--sd-border);
-}
-
-.shop-dashboard .data-table td {
-    padding: 13px 9px;
-    border-bottom: 1px solid #edf0f5;
-    color: var(--sd-text);
-    vertical-align: middle;
-}
-
-.shop-dashboard .data-table tr:last-child td {
-    border-bottom: none;
-}
-
-.shop-dashboard .data-table tr:hover td {
-    background: #fafcff;
-}
-
-.shop-dashboard .data-table a {
-    color: #3478e5;
-    font-weight: 650;
-    text-decoration: none;
-}
-
-.shop-dashboard .data-table a:hover {
-    text-decoration: underline;
-}
-
-.shop-dashboard .empty-row {
-    text-align: center;
-    color: var(--sd-muted) !important;
-    padding: 25px !important;
-}
-
-.shop-dashboard .status-pill {
-    display: inline-block;
-    padding: 5px 9px;
-    border-radius: 20px;
-    font-size: 10px;
-    font-weight: 700;
-    background: #edf2f8;
-    color: #526174;
-}
-
-.shop-dashboard .stock-low {
-    color: #d97706;
-    font-weight: 750;
-}
-
-.shop-dashboard .stock-out {
-    color: #dc2626;
-    font-weight: 800;
-}
-
-/* MANAGEMENT LINKS */
-
-.shop-dashboard .management-heading {
-    font-size: 16px;
-    font-weight: 750;
-    margin: 5px 0 15px;
-}
-
-.shop-dashboard .management-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 13px;
-    margin-bottom: 25px;
-}
-
-.shop-dashboard .management-link {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 15px;
-    background: #fff;
-    border: 1px solid var(--sd-border);
-    border-radius: 12px;
-    text-decoration: none !important;
-    transition: all .2s ease;
-}
-
-.shop-dashboard .management-link:hover {
-    border-color: #93b9f8;
-    background: #f7faff;
-    transform: translateY(-2px);
-}
-
-.shop-dashboard .management-icon {
-    width: 38px;
-    height: 38px;
-    flex-shrink: 0;
-    border-radius: 10px;
-    background: #edf3ff;
-    color: #3478e5;
+.stat-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 17px;
+    width: 37px;
+    height: 37px;
+    border-radius: 10px;
+    background: var(--gold-soft);
+    color: #9B712A;
+    font-size: 19px;
 }
 
-.shop-dashboard .management-text strong {
-    display: block;
-    color: var(--sd-text);
+.stat-value {
+    color: var(--navy);
+    font-size: 25px;
+    font-weight: 750;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+.stat-description {
+    margin-top: 7px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+/* Dashboard sections */
+
+.dashboard-section,
+.chart-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 21px;
+    box-shadow: 0 3px 12px rgba(25,35,55,.035);
+    min-width: 0;
+}
+
+.section-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 19px;
+}
+
+.section-heading h2 {
+    margin: 0;
+    color: var(--navy);
+    font-size: 16px;
+    font-weight: 750;
+}
+
+.section-subtitle {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 5px;
+}
+
+.section-link {
+    color: #A47B31 !important;
+    text-decoration: none !important;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.section-link:hover {
+    color: var(--navy) !important;
+}
+
+/* Sales charts */
+
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 21px;
+}
+
+.chart-card {
+    margin-bottom: 0;
+}
+
+.chart-card h3 {
+    margin: 0;
+    font-size: 14px;
+    color: var(--navy);
+    font-weight: 750;
+}
+
+.chart-card .chart-subtitle {
+    margin: 5px 0 20px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.chart-bars {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 5px;
+    height: 145px;
+    padding-top: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.chart-column {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 7px;
+}
+
+.chart-bar {
+    width: 70%;
+    min-height: 3px;
+    background: linear-gradient(180deg, #E8C77F, #C89A42);
+    border-radius: 5px 5px 0 0;
+}
+
+.chart-bar:hover {
+    opacity: .7;
+}
+
+.chart-label {
+    color: var(--muted);
+    font-size: 9px;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 100%;
+    text-overflow: ellipsis;
+}
+
+.chart-value {
+    color: var(--navy);
+    font-size: 9px;
+    font-weight: 600;
+}
+
+.chart-empty {
+    padding: 35px 10px;
+    text-align: center;
+    color: var(--muted);
     font-size: 12px;
 }
 
-.shop-dashboard .management-text small {
-    display: block;
-    color: var(--sd-muted);
+/* Tables */
+
+.dashboard-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.dashboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 480px;
+}
+
+.dashboard-table th {
+    padding: 12px 10px;
+    text-align: left;
+    color: var(--muted);
     font-size: 10px;
-    margin-top: 4px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
 }
 
-/* EMPTY STATE */
+.dashboard-table td {
+    padding: 13px 10px;
+    color: var(--text);
+    font-size: 12px;
+    border-bottom: 1px solid #F0F1F5;
+    vertical-align: middle;
+}
 
-.shop-dashboard .empty-dashboard {
-    padding: 40px 20px;
+.dashboard-table tr:last-child td {
+    border-bottom: none;
+}
+
+.dashboard-table tbody tr:hover {
+    background: #FAFAFC;
+}
+
+.table-primary {
+    color: var(--navy);
+    font-weight: 700;
+}
+
+.amount {
+    font-weight: 750;
+    color: var(--navy);
+    white-space: nowrap;
+}
+
+.status-pill {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 20px;
+    background: var(--gold-soft);
+    color: #916A28;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.stock-low {
+    color: #B54747;
+    font-weight: 750;
+}
+
+.empty-state {
     text-align: center;
-    background: #fff;
-    border: 1px solid var(--sd-border);
-    border-radius: 14px;
-    color: var(--sd-muted);
+    padding: 28px 10px;
+    color: var(--muted);
+    font-size: 12px;
 }
 
-/* RESPONSIVE */
+/* Two column layout */
 
-@media (max-width: 1200px) {
-    .shop-dashboard .stats-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .shop-dashboard .management-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+.dashboard-two-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-bottom: 21px;
 }
 
-@media (max-width: 767px) {
-    #main {
-        flex-direction: column !important;
-    }
+.dashboard-two-columns .dashboard-section {
+    margin-bottom: 0;
+}
 
-    #nav-sidebar.shop-sidebar {
-        width: 100% !important;
-        min-width: 0 !important;
-        min-height: auto;
-        flex: 0 0 auto !important;
-    }
+/* Quick links */
 
-    #content {
-        padding: 12px !important;
-    }
+.quick-links {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+}
 
-    .shop-dashboard .stats-grid {
+.quick-link {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 14px;
+    background: #FAFAFC;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--navy) !important;
+    text-decoration: none !important;
+    font-size: 12px;
+    font-weight: 700;
+    transition: .2s ease;
+}
+
+.quick-link:hover {
+    background: var(--gold-soft);
+    border-color: var(--gold);
+    transform: translateY(-2px);
+}
+
+.quick-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: #A47B31;
+    font-size: 16px;
+}
+
+.default-app-list {
+    margin-top: 25px;
+}
+
+/* Responsive */
+
+@media(max-width: 1100px) {
+    .stats-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
     }
 
-    .shop-dashboard .stat-card {
-        padding: 14px;
-    }
-
-    .shop-dashboard .stat-value {
-        font-size: 20px;
-    }
-
-    .shop-dashboard .charts-grid,
-    .shop-dashboard .data-grid {
+    .chart-grid {
         grid-template-columns: 1fr;
     }
 
-    .shop-dashboard .chart-card.full-width,
-    .shop-dashboard .data-grid .wide-card {
-        grid-column: auto;
-    }
-
-    .shop-dashboard .section-card {
-        padding: 14px;
-        overflow-x: auto;
-    }
-
-    .shop-dashboard .chart-label {
-        width: 90px;
-    }
-
-    .shop-dashboard .management-grid {
-        grid-template-columns: 1fr 1fr;
-        gap: 9px;
-    }
-
-    .shop-dashboard .management-link {
-        padding: 11px;
-        gap: 8px;
-    }
-
-    .shop-dashboard .management-icon {
-        width: 32px;
-        height: 32px;
-    }
-
-    .shop-dashboard .header-title h1 {
-        font-size: 22px;
+    .quick-links {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
-@media (max-width: 380px) {
-    .shop-dashboard .management-grid {
+@media(max-width: 700px) {
+    .dashboard-two-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-heading h1 {
+        font-size: 22px !important;
+    }
+
+    .dashboard-section {
+        padding: 15px;
+    }
+}
+
+@media(max-width: 450px) {
+    .stats-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .stat-card {
+        padding: 13px;
+    }
+
+    .stat-value {
+        font-size: 19px;
+    }
+
+    .quick-links {
         grid-template-columns: 1fr;
     }
 }
@@ -553,125 +438,97 @@
 {% endblock %}
 
 
-{# =========================================
-   CUSTOM LEFT SIDEBAR
-========================================= #}
-
-
-
-
-
 {% block content %}
 
-<div class="shop-dashboard">
+<div class="dashboard-wrapper">
 
-    <!-- HEADER -->
-
-    <div class="dashboard-header">
-        <div class="header-title">
-            <h1>Welcome to Shop Admin 👋</h1>
-            <p>Monitor your store performance and manage your business.</p>
+    <div class="dashboard-heading">
+        <div>
+            <h1>Welcome to Velora 👋</h1>
+            <p>Here's what's happening with your store today.</p>
         </div>
 
-        <div class="header-status">
-            ● Admin Dashboard
+        <div class="dashboard-date">
+            {% now "d M Y" %}
         </div>
     </div>
 
     {% if stats %}
 
-    <!-- KPI CARDS -->
+    <!-- STATISTICS CARDS -->
 
     <div class="stats-grid">
 
         <div class="stat-card">
             <div class="stat-top">
                 <span class="stat-label">Total Sales</span>
-                <span class="stat-icon blue-icon">₹</span>
+                <span class="stat-icon">₹</span>
             </div>
-            <strong class="stat-value">₹{{ stats.total_sales|floatformat:2 }}</strong>
-            <div class="stat-note">Total placed orders value</div>
+            <div class="stat-value">₹{{ stats.total_sales|floatformat:2 }}</div>
+            <div class="stat-description">Value of placed orders</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
                 <span class="stat-label">Total Revenue</span>
-                <span class="stat-icon green-icon">↗</span>
+                <span class="stat-icon">↗</span>
             </div>
-            <strong class="stat-value">₹{{ stats.total_revenue|floatformat:2 }}</strong>
-            <div class="stat-note">Payments received</div>
+            <div class="stat-value">₹{{ stats.total_revenue|floatformat:2 }}</div>
+            <div class="stat-description">Payments received</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
                 <span class="stat-label">Total Orders</span>
-                <span class="stat-icon purple-icon">▤</span>
+                <span class="stat-icon">▣</span>
             </div>
-            <strong class="stat-value">{{ stats.total_orders }}</strong>
-            <div class="stat-note">Valid placed orders</div>
+            <div class="stat-value">{{ stats.total_orders }}</div>
+            <div class="stat-description">Successfully placed orders</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
                 <span class="stat-label">Pending Orders</span>
-                <span class="stat-icon orange-icon">◷</span>
+                <span class="stat-icon">◷</span>
             </div>
-            <strong class="stat-value">{{ stats.pending_orders }}</strong>
-            <div class="stat-note">Orders in progress</div>
+            <div class="stat-value">{{ stats.pending_orders }}</div>
+            <div class="stat-description">Orders in progress</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
                 <span class="stat-label">Completed Orders</span>
-                <span class="stat-icon green-icon">✓</span>
+                <span class="stat-icon">✓</span>
             </div>
-            <strong class="stat-value">{{ stats.completed_orders }}</strong>
-            <div class="stat-note">Delivered orders</div>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-top">
-                <span class="stat-label">Cancelled Orders</span>
-                <span class="stat-icon red-icon">×</span>
-            </div>
-            <strong class="stat-value">{{ stats.cancelled_orders }}</strong>
-            <div class="stat-note">Cancelled orders</div>
+            <div class="stat-value">{{ stats.completed_orders }}</div>
+            <div class="stat-description">Delivered orders</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
                 <span class="stat-label">Customers</span>
-                <span class="stat-icon blue-icon">♙</span>
+                <span class="stat-icon">♙</span>
             </div>
-            <strong class="stat-value">{{ stats.customers }}</strong>
-            <div class="stat-note">Registered customers</div>
+            <div class="stat-value">{{ stats.customers }}</div>
+            <div class="stat-description">Registered customers</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
-                <span class="stat-label">Products</span>
-                <span class="stat-icon purple-icon">▣</span>
+                <span class="stat-label">Total Products</span>
+                <span class="stat-icon">▣</span>
             </div>
-            <strong class="stat-value">{{ stats.products }}</strong>
-            <div class="stat-note">Products in catalogue</div>
+            <div class="stat-value">{{ stats.products }}</div>
+            <div class="stat-description">Products in catalogue</div>
         </div>
 
         <div class="stat-card">
             <div class="stat-top">
-                <span class="stat-label">Low Stock</span>
-                <span class="stat-icon orange-icon">!</span>
+                <span class="stat-label">Cancelled Orders</span>
+                <span class="stat-icon">×</span>
             </div>
-            <strong class="stat-value">{{ stats.low_stock_count }}</strong>
-            <div class="stat-note">Low / out of stock</div>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-top">
-                <span class="stat-label">Pending Refunds</span>
-                <span class="stat-icon red-icon">↶</span>
-            </div>
-            <strong class="stat-value">{{ stats.refunds_pending }}</strong>
-            <div class="stat-note">Refunds awaiting action</div>
+            <div class="stat-value">{{ stats.cancelled_orders }}</div>
+            <div class="stat-description">Cancelled orders</div>
         </div>
 
     </div>
@@ -679,213 +536,320 @@
 
     <!-- SALES ANALYTICS -->
 
-    <h2 class="management-heading">Sales Analytics</h2>
+    <div class="section-heading">
+        <div>
+            <h2>Sales Analytics</h2>
+            <div class="section-subtitle">Order sales performance overview</div>
+        </div>
+    </div>
 
-    <div class="charts-grid">
+    <div class="chart-grid">
 
-        <div class="section-card chart-card">
-            <div class="section-heading">
-                <div>
-                    <h2>Daily Sales</h2>
-                    <p>Last 14 days performance</p>
+        <!-- DAILY SALES -->
+
+        <div class="chart-card">
+            <h3>Daily Sales</h3>
+            <p class="chart-subtitle">Last 14 days</p>
+
+            {% if stats.daily %}
+            <div class="chart-bars">
+
+                {% for item in stats.daily %}
+
+                <div class="chart-column"
+                     title="{{ item.label }}: ₹{{ item.amount|floatformat:2 }}">
+
+                    <span class="chart-value">{{ item.orders }}</span>
+
+                    <div class="chart-bar"
+                          data-height="{{ item.pct|default:0 }}"></div>
+                    
+                    <span class="chart-label">{{ item.label }}</span>
+
                 </div>
-                <span class="stat-icon blue-icon">▥</span>
-            </div>
 
-            <table class="chart-table">
-                {% for r in stats.daily %}
-                <tr>
-                    <td class="chart-label">{{ r.label }}</td>
-                    <td class="chart-bar-cell">
-                        <div class="bar-track">
-                            <div class="bar-fill daily-bar" data-width="{{ r.pct }}"></div>
-                        </div>
-                    </td>
-                    <td class="chart-value">₹{{ r.amount|floatformat:0 }}</td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="3">No daily sales data.</td></tr>
                 {% endfor %}
-            </table>
+
+            </div>
+            {% else %}
+            <div class="chart-empty">No sales data available yet.</div>
+            {% endif %}
         </div>
 
 
-        <div class="section-card chart-card">
-            <div class="section-heading">
-                <div>
-                    <h2>Weekly Sales</h2>
-                    <p>Last 8 weeks performance</p>
-                </div>
-                <span class="stat-icon purple-icon">▥</span>
-            </div>
+        <!-- WEEKLY SALES -->
 
-            <table class="chart-table">
-                {% for r in stats.weekly %}
-                <tr>
-                    <td class="chart-label">{{ r.label }}</td>
-                    <td class="chart-bar-cell">
-                        <div class="bar-track">
-                            <div class="bar-fill weekly-bar" data-width="{{ r.pct }}"></div>
-                        </div>
-                    </td>
-                    <td class="chart-value">₹{{ r.amount|floatformat:0 }}</td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="3">No weekly sales data.</td></tr>
+        <div class="chart-card">
+            <h3>Weekly Sales</h3>
+            <p class="chart-subtitle">Last 8 weeks</p>
+
+            {% if stats.weekly %}
+            <div class="chart-bars">
+
+                {% for item in stats.weekly %}
+
+                <div class="chart-column"
+                     title="{{ item.label }}: ₹{{ item.amount|floatformat:2 }}">
+
+                    <span class="chart-value">{{ item.orders }}</span>
+
+                    
+                    <div class="chart-bar" data-height="{{ item.pct }}"></div>
+
+                    <span class="chart-label">{{ item.label }}</span>
+
+                </div>
+
                 {% endfor %}
-            </table>
+
+            </div>
+            {% else %}
+            <div class="chart-empty">No sales data available yet.</div>
+            {% endif %}
         </div>
 
 
-        <div class="section-card chart-card full-width">
-            <div class="section-heading">
-                <div>
-                    <h2>Monthly Sales</h2>
-                    <p>Last 6 months performance</p>
-                </div>
-                <span class="stat-icon green-icon">▥</span>
-            </div>
+        <!-- MONTHLY SALES -->
 
-            <table class="chart-table">
-                {% for r in stats.monthly %}
-                <tr>
-                    <td class="chart-label">{{ r.label }}</td>
-                    <td class="chart-bar-cell">
-                        <div class="bar-track">
-                            <div class="bar-fill monthly-bar" data-width="{{ r.pct }}"></div>
-                        </div>
-                    </td>
-                    <td class="chart-value">₹{{ r.amount|floatformat:0 }}</td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="3">No monthly sales data.</td></tr>
+        <div class="chart-card">
+            <h3>Monthly Sales</h3>
+            <p class="chart-subtitle">Last 6 months</p>
+
+            {% if stats.monthly %}
+            <div class="chart-bars">
+
+                {% for item in stats.monthly %}
+
+                <div class="chart-column"
+                     title="{{ item.label }}: ₹{{ item.amount|floatformat:2 }}">
+
+                    <span class="chart-value">{{ item.orders }}</span>
+
+                    
+                    <div class="chart-bar" data-height="{{ item.pct }}"></div>
+
+                    <span class="chart-label">{{ item.label }}</span>
+
+                </div>
+
                 {% endfor %}
-            </table>
+
+            </div>
+            {% else %}
+            <div class="chart-empty">No sales data available yet.</div>
+            {% endif %}
         </div>
 
     </div>
 
 
-    <!-- STORE PERFORMANCE -->
+    <!-- BEST SELLERS AND LOW STOCK -->
 
-    <h2 class="management-heading">Store Performance</h2>
+    <div class="dashboard-two-columns">
 
-    <div class="data-grid">
+        <!-- BEST SELLERS -->
 
-        <div class="section-card">
+        <div class="dashboard-section">
+
             <div class="section-heading">
                 <div>
-                    <h2>Best-selling Products</h2>
-                    <p>Top 5 products by units sold</p>
+                    <h2>🏆 Best Sellers</h2>
+                    <div class="section-subtitle">Top selling products</div>
                 </div>
+
+                <a href="{% url 'shop_admin:products_product_changelist' %}"
+                   class="section-link">
+                    View Products →
+                </a>
             </div>
 
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>Product</th>
-                        <th>Units</th>
-                        <th>Revenue</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for p in stats.best_sellers %}
-                    <tr>
-                        <td>{{ p.product_name }}</td>
-                        <td>{{ p.qty }}</td>
-                        <td>₹{{ p.revenue|floatformat:2 }}</td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="3" class="empty-row">No sales yet.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div class="dashboard-table-wrap">
+                <table class="dashboard-table">
+
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th>Quantity</th>
+                            <th>Revenue</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        {% for item in stats.best_sellers %}
+
+                        <tr>
+                            <td class="table-primary">
+                                {{ item.product_name }}
+                            </td>
+
+                            <td>{{ item.qty }}</td>
+
+                            <td class="amount">
+                                ₹{{ item.revenue|floatformat:2 }}
+                            </td>
+                        </tr>
+
+                        {% empty %}
+
+                        <tr>
+                            <td colspan="3" class="empty-state">
+                                No sales records yet.
+                            </td>
+                        </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+                </table>
+            </div>
+
         </div>
 
 
-        <div class="section-card">
+        <!-- LOW STOCK -->
+
+        <div class="dashboard-section">
+
             <div class="section-heading">
                 <div>
-                    <h2>Low Stock Alerts</h2>
-                    <p>Products that need restocking</p>
+                    <h2>⚠ Low Stock Products</h2>
+                    <div class="section-subtitle">
+                        {{ stats.low_stock_count }} products need attention
+                    </div>
                 </div>
+
+                <a href="{% url 'shop_admin:products_product_changelist' %}"
+                   class="section-link">
+                    Manage →
+                </a>
             </div>
 
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>Product</th>
-                        <th>Stock</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for p in stats.low_stock %}
-                    <tr>
-                        <td>
-                            <a href="{% url 'admin:products_product_change' p.pk %}">
-                                {{ p.name }}
-                            </a>
-                        </td>
-                        <td>
-                            {% if p.stock == 0 %}
-                                <span class="stock-out">OUT OF STOCK</span>
-                            {% else %}
-                                <span class="stock-low">{{ p.stock }}</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="2" class="empty-row">
-                            All products sufficiently stocked.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div class="dashboard-table-wrap">
+                <table class="dashboard-table">
+
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th>Available Stock</th>
+                            <th>Threshold</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        {% for product in stats.low_stock %}
+
+                        <tr>
+                            <td class="table-primary">
+                                {{ product.name }}
+                            </td>
+
+                            <td class="stock-low">
+                                {{ product.stock }}
+                            </td>
+
+                            <td>
+                                {{ product.low_stock_threshold }}
+                            </td>
+                        </tr>
+
+                        {% empty %}
+
+                        <tr>
+                            <td colspan="3" class="empty-state">
+                                All products have sufficient stock.
+                            </td>
+                        </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+                </table>
+            </div>
+
         </div>
 
+    </div>
 
-        <div class="section-card wide-card">
-            <div class="section-heading">
-                <div>
-                    <h2>Recent Orders</h2>
-                    <p>Latest customer orders</p>
+
+    <!-- RECENT ORDERS -->
+
+    <div class="dashboard-section">
+
+        <div class="section-heading">
+            <div>
+                <h2>Recent Orders</h2>
+                <div class="section-subtitle">
+                    Latest customer orders
                 </div>
             </div>
 
-            <table class="data-table">
+            <a href="{% url 'shop_admin:orders_order_changelist' %}"
+               class="section-link">
+                View All Orders →
+            </a>
+        </div>
+
+        <div class="dashboard-table-wrap">
+
+            <table class="dashboard-table">
+
                 <thead>
                     <tr>
-                        <th>Order Number</th>
+                        <th>Order</th>
                         <th>Customer</th>
+                        <th>Date</th>
                         <th>Status</th>
-                        <th>Total Amount</th>
+                        <th>Payment</th>
+                        <th>Total</th>
                     </tr>
                 </thead>
+
                 <tbody>
-                    {% for o in stats.recent_orders %}
+
+                    {% for order in stats.recent_orders %}
+
                     <tr>
-                        <td>
-                            <a href="{% url 'admin:orders_order_change' o.pk %}">
-                                {{ o.order_number }}
+
+                        <td class="table-primary">
+                            <a href="{% url 'shop_admin:orders_order_change' order.pk %}">
+                                #{{ order.pk }}
                             </a>
                         </td>
-                        <td>{{ o.user }}</td>
+
+                        <td>{{ order.user }}</td>
+
+                        <td>{{ order.created_at|date:"d M Y" }}</td>
+
                         <td>
-                            <span class="status-pill">{{ o.get_status_display }}</span>
+                            <span class="status-pill">
+                                {{ order.get_status_display }}
+                            </span>
                         </td>
-                        <td>₹{{ o.total_amount|floatformat:2 }}</td>
+
+                        <td>{{ order.get_payment_status_display }}</td>
+
+                        <td class="amount">
+                            ₹{{ order.total_amount|floatformat:2 }}
+                        </td>
+
                     </tr>
+
                     {% empty %}
+
                     <tr>
-                        <td colspan="4" class="empty-row">No orders available yet.</td>
+                        <td colspan="6" class="empty-state">
+                            No orders available yet.
+                        </td>
                     </tr>
+
                     {% endfor %}
+
                 </tbody>
+
             </table>
+
         </div>
 
     </div>
@@ -893,72 +857,75 @@
 
     <!-- QUICK MANAGEMENT -->
 
-    <h2 class="management-heading">Quick Management</h2>
+    <div class="dashboard-section">
 
-    <div class="management-grid">
+        <div class="section-heading">
+            <div>
+                <h2>Quick Management</h2>
+                <div class="section-subtitle">
+                    Frequently used admin sections
+                </div>
+            </div>
+        </div>
 
-        {% if request.user.is_superuser %}
-        <a class="management-link" href="{% url 'admin:products_product_changelist' %}">
-            <span class="management-icon">▣</span>
-            <span class="management-text">
-                <strong>Products</strong>
-                <small>Manage catalogue</small>
-            </span>
-        </a>
+        <div class="quick-links">
 
-        <a class="management-link" href="{% url 'admin:categories_category_changelist' %}">
-            <span class="management-icon">▤</span>
-            <span class="management-text">
-                <strong>Categories</strong>
-                <small>Manage categories</small>
-            </span>
-        </a>
+            <a href="{% url 'shop_admin:products_product_changelist' %}"
+               class="quick-link">
+                <span class="quick-icon">▣</span>
+                Products
+            </a>
 
-        <a class="management-link" href="{% url 'admin:orders_order_changelist' %}">
-            <span class="management-icon">▧</span>
-            <span class="management-text">
-                <strong>Orders</strong>
-                <small>Manage customer orders</small>
-            </span>
-        </a>
+            <a href="{% url 'shop_admin:categories_category_changelist' %}"
+               class="quick-link">
+                <span class="quick-icon">▤</span>
+                Categories
+            </a>
 
-        <a class="management-link" href="{% url 'admin:accounts_user_changelist' %}">
-            <span class="management-icon">♙</span>
-            <span class="management-text">
-                <strong>Customers</strong>
-                <small>View customer details</small>
-            </span>
-        </a>
-        {% endif %}
+            <a href="{% url 'shop_admin:orders_order_changelist' %}"
+               class="quick-link">
+                <span class="quick-icon">▣</span>
+                Orders
+            </a>
+
+            <a href="{% url 'shop_admin:accounts_user_changelist' %}"
+               class="quick-link">
+                <span class="quick-icon">♙</span>
+                Customers
+            </a>
+
+        </div>
 
     </div>
 
     {% else %}
 
-    <div class="empty-dashboard">
-        <h2>Dashboard data is unavailable</h2>
-        <p>Your account may not have permission to view store sales information.</p>
-        <p>Please contact the administrator.</p>
+    <div class="dashboard-section">
+        <h2>Dashboard data unavailable</h2>
+        <p>
+            Your account may not have permission to view dashboard statistics.
+        </p>
     </div>
 
     {% endif %}
 
-</div>
 
+    <!-- DEFAULT DJANGO ADMIN APP LIST -->
+
+    <div class="default-app-list">
+        {{ block.super }}
+    </div>
+
+</div>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-    document.querySelectorAll(".shop-dashboard .bar-fill[data-width]")
-        .forEach(function (bar) {
-            const value = Number(bar.dataset.width);
+    document.querySelectorAll(".chart-bar").forEach(function (bar) {
+        let height = parseFloat(bar.dataset.height) || 0;
 
-            if (Number.isFinite(value)) {
-                bar.style.width = Math.max(0, Math.min(100, value)) + "%";
-            }
-        });
+        height = Math.max(0, Math.min(100, height));
+
+        bar.style.height = height + "%";
+    });
 });
 </script>
-
-<!-- KEEP DJANGO DEFAULT ADMIN APP LIST -->
-{{ block.super }}
-
 {% endblock %}

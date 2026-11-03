@@ -1,6 +1,11 @@
+
+
 import { z } from 'zod';
 
-const phone = z.string().regex(/^\+?\d{10,14}$/, 'Enter a valid phone number (10-14 digits)');
+const phone = z
+  .string()
+  .regex(/^\+?\d{10,14}$/, 'Enter a valid phone number (10-14 digits)');
+
 const password = z
   .string()
   .min(8, 'At least 8 characters')
@@ -21,9 +26,14 @@ export const registerSchema = z
     password,
     confirm: z.string(),
   })
-  .refine((v) => v.password === v.confirm, { path: ['confirm'], message: 'Passwords do not match' });
+  .refine((v) => v.password === v.confirm, {
+    path: ['confirm'],
+    message: 'Passwords do not match',
+  });
 
-export const forgotSchema = z.object({ email: z.string().trim().email('Enter a valid email') });
+export const forgotSchema = z.object({
+  email: z.string().trim().email('Enter a valid email'),
+});
 
 export const resetSchema = z.object({
   uid: z.string().trim().min(1, 'Required'),
@@ -41,6 +51,10 @@ export const addressSchema = z.object({
   postal_code: z.string().regex(/^\d{6}$/, 'Enter a 6-digit PIN code'),
   delivery_instructions: z.string().max(300).optional(),
   is_default: z.boolean(),
+
+  // GPS coordinates
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
 });
 
 export const profileSchema = z.object({
@@ -50,8 +64,15 @@ export const profileSchema = z.object({
 });
 
 export const changePasswordSchema = z
-  .object({ old_password: z.string().min(1, 'Required'), new_password: password, confirm: z.string() })
-  .refine((v) => v.new_password === v.confirm, { path: ['confirm'], message: 'Passwords do not match' });
+  .object({
+    old_password: z.string().min(1, 'Required'),
+    new_password: password,
+    confirm: z.string(),
+  })
+  .refine((v) => v.new_password === v.confirm, {
+    path: ['confirm'],
+    message: 'Passwords do not match',
+  });
 
 export type LoginForm = z.infer<typeof loginSchema>;
 export type RegisterForm = z.infer<typeof registerSchema>;

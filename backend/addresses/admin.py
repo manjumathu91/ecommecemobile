@@ -1,9 +1,13 @@
+
 from django.contrib import admin
+from core.admin_site import shop_admin_site
 
 from .models import Address
 
 
-@admin.register(Address)
 class AddressAdmin(admin.ModelAdmin):
     list_display = ("full_name", "user", "city", "state", "postal_code", "is_default")
     search_fields = ("full_name", "user__email", "city")
+
+
+shop_admin_site.register(Address, AddressAdmin)

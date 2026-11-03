@@ -1,3 +1,4 @@
+
 {
   "expo": {
     "name": "Velora",
@@ -14,19 +15,24 @@
     "android": {
       "package": "com.manju.velora"
     },
-    
     "plugins": [
-  "expo-secure-store",
-  "expo-notifications",
-  [
-    "expo-build-properties",
-    {
-      "android": {
-        "usesCleartextTraffic": true
-      }
-    }
-  ]
-],
+      "expo-secure-store",
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Velora to use your location to find your delivery address."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
     "owner": "manjumathu",
     "extra": {
       "eas": {

@@ -1,6 +1,6 @@
 from django.contrib import admin, messages
 from rest_framework.exceptions import APIException, ValidationError
-
+from core.admin_site import shop_admin_site
 from payments.services import refund_order
 
 from .models import FLOW, Order, OrderItem, OrderStatus, OrderStatusHistory
@@ -66,7 +66,7 @@ def refund_selected(modeladmin, request, queryset):
             modeladmin.message_user(request, f"{order.order_number}: {_detail(exc)}", messages.ERROR)
 
 
-@admin.register(Order)
+
 class OrderAdmin(admin.ModelAdmin):
     list_display = ("order_number", "user", "status", "payment_method", "payment_status", "total_amount", "created_at")
     list_filter = ("status", "payment_method", "payment_status", "created_at")
@@ -82,3 +82,4 @@ class OrderAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+shop_admin_site.register(Order, OrderAdmin)

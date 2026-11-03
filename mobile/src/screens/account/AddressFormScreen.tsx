@@ -1,6 +1,6 @@
 
 
-import React from 'react';
+import React, { useState } from 'react';
 
 import {
   KeyboardAvoidingView,
@@ -10,6 +10,8 @@ import {
   Text,
   View,
   StyleSheet,
+  Pressable,
+  ActivityIndicator,
 } from 'react-native';
 
 import Animated, {
@@ -24,6 +26,8 @@ import {
   Controller,
   useForm,
 } from 'react-hook-form';
+
+import * as Location from 'expo-location';
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -62,15 +66,17 @@ import {
 // ======================================================
 
 export default function AddressFormScreen({
-
   route,
   navigation,
-
 }: NativeStackScreenProps<RootStackParamList, 'AddressForm'>) {
 
   const editing = route.params?.address;
-
   const toast = useToast();
+
+  const [locating, setLocating] = useState(false);
+  const [locationSelected, setLocationSelected] = useState(
+    Boolean(editing?.latitude && editing?.longitude)
+  );
 
   // ====================================================
   // FORM SETUP
@@ -80,37 +86,173 @@ export default function AddressFormScreen({
     control,
     handleSubmit,
     setError,
+    setValue,
     formState: {
       isSubmitting,
     },
   } = useForm<AddressForm>({
-
     resolver: zodResolver(addressSchema),
 
     defaultValues: {
-
       full_name: editing?.full_name ?? '',
-
       phone: editing?.phone ?? '',
-
       house_number: editing?.house_number ?? '',
-
       street: editing?.street ?? '',
-
       city: editing?.city ?? '',
-
       state: editing?.state ?? '',
-
       postal_code: editing?.postal_code ?? '',
-
       delivery_instructions:
         editing?.delivery_instructions ?? '',
-
       is_default: editing?.is_default ?? false,
-
+      latitude: editing?.latitude
+        ? Number(editing.latitude)
+        : null,
+      longitude: editing?.longitude
+        ? Number(editing.longitude)
+        : null,
     },
-
   });
+
+  // ====================================================
+  // GET CURRENT LOCATION
+  // ====================================================
+
+  const getCurrentLocation = async () => {
+
+    try {
+
+      setLocating(true);
+
+      const permission =
+        await Location.requestForegroundPermissionsAsync();
+
+      if (!permission.granted) {
+
+        toast.show(
+          'Location permission is required to detect your address.',
+          'error'
+        );
+
+        return;
+      }
+
+      const enabled =
+        await Location.hasServicesEnabledAsync();
+
+      if (!enabled) {
+
+        toast.show(
+          'Please enable GPS location on your device.',
+          'error'
+        );
+
+        return;
+      }
+
+      const position =
+        await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+
+      setValue('latitude', latitude, {
+        shouldValidate: true,
+      });
+
+      setValue('longitude', longitude, {
+        shouldValidate: true,
+      });
+
+      setLocationSelected(true);
+
+      // Reverse geocoding
+
+      const addresses =
+        await Location.reverseGeocodeAsync({
+          latitude,
+          longitude,
+        });
+
+      if (addresses.length > 0) {
+
+        const address = addresses[0];
+
+        const street =
+          [
+            address.street,
+            address.subregion,
+          ]
+            .filter(Boolean)
+            .join(', ');
+
+        const city =
+          address.city ||
+          address.district ||
+          address.subregion ||
+          '';
+
+        const state =
+          address.region || '';
+
+        const postalCode =
+          address.postalCode || '';
+
+        if (street) {
+          setValue('street', street, {
+            shouldValidate: true,
+          });
+        }
+
+        if (city) {
+          setValue('city', city, {
+            shouldValidate: true,
+          });
+        }
+
+        if (state) {
+          setValue('state', state, {
+            shouldValidate: true,
+          });
+        }
+
+        if (/^\d{6}$/.test(postalCode)) {
+          setValue('postal_code', postalCode, {
+            shouldValidate: true,
+          });
+        }
+
+        toast.show(
+          'Location detected! Please verify your address.',
+          'success'
+        );
+
+      } else {
+
+        toast.show(
+          'GPS detected. Please enter your address manually.',
+          'success'
+        );
+
+      }
+
+    } catch (error) {
+
+      console.log('Location error:', error);
+
+      toast.show(
+        'Unable to detect address. Please enter it manually.',
+        'error'
+      );
+
+    } finally {
+
+      setLocating(false);
+
+    }
+
+  };
 
   // ====================================================
   // SUBMIT FORM
@@ -120,7 +262,8 @@ export default function AddressFormScreen({
 
     const body = {
       ...v,
-      delivery_instructions: v.delivery_instructions ?? '',
+      delivery_instructions:
+        v.delivery_instructions ?? '',
     };
 
     try {
@@ -188,9 +331,7 @@ export default function AddressFormScreen({
           contentContainerStyle={styles.scrollContent}
         >
 
-          {/* ============================================
-              PAGE HEADER
-          ============================================ */}
+          {/* PAGE HEADER */}
 
           <Animated.View
             entering={FadeInDown.duration(
@@ -217,13 +358,84 @@ export default function AddressFormScreen({
 
           </Animated.View>
 
-          {/* ============================================
-              PERSONAL INFORMATION
-          ============================================ */}
+          {/* CURRENT LOCATION */}
 
           <Animated.View
             entering={FadeInDown
               .delay(100)
+              .duration(motion.duration.smooth)}
+            style={styles.locationCard}
+          >
+
+            <View style={styles.locationHeader}>
+
+              <View style={styles.locationIcon}>
+                <Text style={styles.locationIconText}>
+                  📍
+                </Text>
+              </View>
+
+              <View style={styles.locationHeading}>
+
+                <Text style={styles.locationTitle}>
+                  Find Your Delivery Location
+                </Text>
+
+                <Text style={styles.locationSubtitle}>
+                  Automatically detect your address using GPS.
+                </Text>
+
+              </View>
+
+            </View>
+
+            <Pressable
+              onPress={getCurrentLocation}
+              disabled={locating}
+              style={({ pressed }) => [
+                styles.locationButton,
+                pressed && styles.locationButtonPressed,
+                locating && styles.locationButtonDisabled,
+              ]}
+            >
+
+              {locating ? (
+
+                <ActivityIndicator
+                  color={colors.white}
+                />
+
+              ) : (
+
+                <Text style={styles.locationButtonIcon}>
+                  ◎
+                </Text>
+
+              )}
+
+              <Text style={styles.locationButtonText}>
+                {locating
+                  ? 'Detecting Location...'
+                  : 'Use My Current Location'}
+              </Text>
+
+            </Pressable>
+
+            {locationSelected && (
+
+              <Text style={styles.locationSuccess}>
+                ✓ GPS location captured. Verify the address below.
+              </Text>
+
+            )}
+
+          </Animated.View>
+
+          {/* PERSONAL INFORMATION */}
+
+          <Animated.View
+            entering={FadeInDown
+              .delay(150)
               .duration(motion.duration.smooth)}
             style={styles.section}
           >
@@ -268,9 +480,7 @@ export default function AddressFormScreen({
 
           </Animated.View>
 
-          {/* ============================================
-              ADDRESS DETAILS
-          ============================================ */}
+          {/* ADDRESS DETAILS */}
 
           <Animated.View
             entering={FadeInDown
@@ -293,7 +503,7 @@ export default function AddressFormScreen({
                 </Text>
 
                 <Text style={styles.sectionSubtitle}>
-                  Enter your complete delivery location.
+                  Verify your location and complete the details.
                 </Text>
               </View>
 
@@ -351,9 +561,7 @@ export default function AddressFormScreen({
 
           </Animated.View>
 
-          {/* ============================================
-              DELIVERY INSTRUCTIONS
-          ============================================ */}
+          {/* DELIVERY INSTRUCTIONS */}
 
           <Animated.View
             entering={FadeInDown
@@ -396,9 +604,7 @@ export default function AddressFormScreen({
 
           </Animated.View>
 
-          {/* ============================================
-              DEFAULT ADDRESS SETTING
-          ============================================ */}
+          {/* DEFAULT ADDRESS */}
 
           <Animated.View
             entering={FadeInDown
@@ -443,9 +649,7 @@ export default function AddressFormScreen({
 
           </Animated.View>
 
-          {/* ============================================
-              SAVE BUTTON
-          ============================================ */}
+          {/* SAVE BUTTON */}
 
           <Animated.View
             entering={FadeInDown
@@ -488,8 +692,6 @@ export default function AddressFormScreen({
 
 const styles = StyleSheet.create({
 
-  // Main container
-
   container: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -504,8 +706,6 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
     paddingBottom: spacing.xxxl,
   },
-
-  // Header
 
   header: {
     marginBottom: spacing.xl,
@@ -533,7 +733,90 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 
-  // Form sections
+  locationCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+    ...shadows.small,
+  },
+
+  locationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
+
+  locationIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  locationIconText: {
+    fontSize: 22,
+  },
+
+  locationHeading: {
+    flex: 1,
+  },
+
+  locationTitle: {
+    color: colors.text,
+    fontSize: typography.fontSize.md,
+    fontWeight: '800',
+  },
+
+  locationSubtitle: {
+    color: colors.muted,
+    fontSize: typography.fontSize.xs,
+    lineHeight: typography.lineHeight.normal,
+    marginTop: spacing.xs,
+  },
+
+  locationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
+    minHeight: 50,
+  },
+
+  locationButtonPressed: {
+    opacity: 0.85,
+  },
+
+  locationButtonDisabled: {
+    opacity: 0.7,
+  },
+
+  locationButtonIcon: {
+    color: colors.white,
+    fontSize: 23,
+    fontWeight: '800',
+  },
+
+  locationButtonText: {
+    color: colors.white,
+    fontSize: typography.fontSize.sm,
+    fontWeight: '800',
+  },
+
+  locationSuccess: {
+    color: colors.success,
+    fontSize: typography.fontSize.xs,
+    marginTop: spacing.md,
+    fontWeight: '700',
+  },
 
   section: {
     backgroundColor: colors.card,
@@ -598,8 +881,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
 
-  // Default address
-
   defaultCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -628,8 +909,6 @@ const styles = StyleSheet.create({
     lineHeight: typography.lineHeight.normal,
     marginTop: spacing.xs,
   },
-
-  // Submit section
 
   submitContainer: {
     marginTop: spacing.xs,

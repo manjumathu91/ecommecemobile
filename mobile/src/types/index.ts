@@ -103,6 +103,7 @@ export interface WishlistItem {
   added_at: string;
 }
 
+
 export interface Address {
   id: number;
   full_name: string;
@@ -114,7 +115,13 @@ export interface Address {
   postal_code: string;
   delivery_instructions: string;
   is_default: boolean;
+
+  // GPS location
+  latitude?: number | null;
+  longitude?: number | null;
 }
+
+
 export type AddressInput = Omit<Address, 'id'>;
 
 export type PaymentMethod = 'COD' | 'RAZORPAY';
