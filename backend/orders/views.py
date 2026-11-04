@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from . import services
 from .invoice import render_invoice_pdf
+from .admin_views import apply_order_filters
 from .models import Order
 from .serializers import (
     CheckoutSerializer, OrderDetailSerializer, OrderListSerializer, SummarySerializer, build_tracking,
@@ -52,8 +53,13 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     
 
+    search_fields = ("order_number", "items__product_name")
+    ordering_fields = ("created_at", "total_amount")
+
     def get_queryset(self):
-        return _queryset(self.request.user)
+        qs = _queryset(self.request.user)
+        # Order history filters for the customer: ?status= ?payment_status= ?date_from= ?date_to=
+        return apply_order_filters(qs, self.request.query_params) if self.action == "list" else qs
 
     def get_serializer_class(self):
         return OrderListSerializer if self.action == "list" else OrderDetailSerializer

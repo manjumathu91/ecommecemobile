@@ -65,6 +65,8 @@ class CustomUserAdmin(UserAdmin):
         "first_name",
         "last_name",
         "phone",
+        "order_count",
+        "is_active",
         "is_staff",
         "date_joined",
     )
@@ -87,6 +89,7 @@ class CustomUserAdmin(UserAdmin):
             )
         }),
         ("Dates", {"fields": ("last_login", "date_joined")}),
+        ("Orders", {"fields": ("order_history",)}),
     )
 
     add_fieldsets = (
@@ -103,8 +106,25 @@ class CustomUserAdmin(UserAdmin):
         }),
     )
 
-    readonly_fields = ("last_login", "date_joined")
+    readonly_fields = ("last_login", "date_joined", "order_history")
     
+    def get_queryset(self, request):
+        from django.db.models import Count
+        return super().get_queryset(request).annotate(_orders=Count("orders"))
+
+    @admin.display(description="Orders", ordering="_orders")
+    def order_count(self, obj):
+        return obj._orders
+
+    @admin.display(description="Customer order history")
+    def order_history(self, obj):
+        from django.urls import reverse
+        from django.utils.html import format_html
+        if not obj.pk:
+            return "-"
+        url = reverse("shop_admin:orders_order_changelist") + f"?user__id__exact={obj.pk}"
+        return format_html('<a href="{}">View {} order(s)</a>', url, obj.orders.count())
+
     def add_view(self, request, form_url="", extra_context=None):
         try:
             return super().add_view(request, form_url, extra_context)

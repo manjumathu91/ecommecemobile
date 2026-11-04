@@ -7,6 +7,7 @@ from django.db.models import Count, F, Sum
 from django.utils import timezone
 
 from orders.models import Order, OrderItem, OrderStatus, PaymentStatus
+from categories.models import Category
 from products.models import Product
 
 IN_PROGRESS = [OrderStatus.PLACED, OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.OUT_FOR_DELIVERY]
@@ -56,6 +57,10 @@ def dashboard_context():
         "completed_orders": Order.objects.filter(status=OrderStatus.DELIVERED).count(),
         "cancelled_orders": Order.objects.filter(status=OrderStatus.CANCELLED).count(),
         "refunds_pending": Order.objects.filter(payment_status=PaymentStatus.REFUND_PENDING).count(),
+        "processing_orders": Order.objects.filter(status__in=[OrderStatus.CONFIRMED, OrderStatus.PROCESSING]).count(),
+        "shipped_orders": Order.objects.filter(status__in=[OrderStatus.SHIPPED, OrderStatus.OUT_FOR_DELIVERY]).count(),
+        "categories": Category.objects.count(),
+        "recent_customers": get_user_model().objects.filter(is_staff=False).order_by("-date_joined")[:5],
         "customers": get_user_model().objects.filter(is_staff=False).count(),
         "products": Product.objects.count(),
         "low_stock_count": low.count(),

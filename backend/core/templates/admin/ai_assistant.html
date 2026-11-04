@@ -1,0 +1,14 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<div class="module" style="padding:20px;max-width:760px">
+  <h2>Velora Shopping Assistant</h2>
+  <table>
+    <tr><th>Status</th><td>{% if configured %}<strong style="color:#15803d">Configured</strong>{% else %}<strong style="color:#b91c1c">Not configured &ndash; set GROQ_API_KEY on the server</strong>{% endif %}</td></tr>
+    <tr><th>Model</th><td>{{ model }}</td></tr>
+    <tr><th>Endpoint</th><td><code>POST {{ endpoint }}</code> (login required)</td></tr>
+  </table>
+  <p class="help" style="margin-top:14px">Customer chat messages are not stored by the backend, so no usage or error history is
+  available here. This protects customer privacy. Failures are written to the server log (Render &rarr; Logs).
+  The API key is never shown.</p>
+</div>
+{% endblock %}

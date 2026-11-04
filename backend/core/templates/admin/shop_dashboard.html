@@ -438,6 +438,8 @@
 {% endblock %}
 
 
+{% block nav-sidebar %}{% include "admin/_velora_sidebar.html" %}{% endblock %}
+
 {% block content %}
 
 <div class="dashboard-wrapper">
@@ -529,6 +531,42 @@
             </div>
             <div class="stat-value">{{ stats.cancelled_orders }}</div>
             <div class="stat-description">Cancelled orders</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-top">
+                <span class="stat-label">Processing Orders</span>
+                <span class="stat-icon">⚙</span>
+            </div>
+            <div class="stat-value">{{ stats.processing_orders }}</div>
+            <div class="stat-description">Confirmed / being processed</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-top">
+                <span class="stat-label">Shipped Orders</span>
+                <span class="stat-icon">➜</span>
+            </div>
+            <div class="stat-value">{{ stats.shipped_orders }}</div>
+            <div class="stat-description">Shipped / out for delivery</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-top">
+                <span class="stat-label">Total Categories</span>
+                <span class="stat-icon">▤</span>
+            </div>
+            <div class="stat-value">{{ stats.categories }}</div>
+            <div class="stat-description">Product categories</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-top">
+                <span class="stat-label">Low Stock Products</span>
+                <span class="stat-icon">⚠</span>
+            </div>
+            <div class="stat-value">{{ stats.low_stock_count }}</div>
+            <div class="stat-description">At or below threshold</div>
         </div>
 
     </div>
@@ -772,6 +810,32 @@
 
     </div>
 
+
+    <!-- RECENT CUSTOMERS -->
+    <div class="dashboard-section">
+        <div class="section-heading">
+            <div>
+                <h2>Recent Customers</h2>
+                <div class="section-subtitle">Newest registrations</div>
+            </div>
+            <a href="{% url 'shop_admin:accounts_user_changelist' %}" class="section-link">View All Customers →</a>
+        </div>
+        <div class="dashboard-table-wrap">
+            <table class="dashboard-table">
+                <thead><tr><th>Customer</th><th>Email</th><th>Joined</th></tr></thead>
+                <tbody>
+                {% for c in stats.recent_customers %}
+                <tr>
+                    <td><a href="{% url 'shop_admin:accounts_user_change' c.pk %}">{{ c.get_full_name|default:"-" }}</a></td>
+                    <td>{{ c.email }}</td>
+                    <td>{{ c.date_joined|date:"d M Y" }}</td>
+                </tr>
+                {% empty %}<tr><td colspan="3">No customers yet.</td></tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="section-subtitle">Sales = value of placed orders (not cancelled or awaiting payment). Revenue = orders whose payment status is Paid (online payments received and delivered COD orders).</p>
+    </div>
 
     <!-- RECENT ORDERS -->
 

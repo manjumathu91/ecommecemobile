@@ -7,7 +7,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from addresses.models import Address
 from cart.services import get_cart, remove_ordered_items_from_cart
@@ -369,10 +369,11 @@ def checkout_summary(user, coupon_code=None, address_id=None):
     }
 
 
-def _record(order, status, note="", by=None):
+def _record(order, status, note="", by=None, previous=""):
     OrderStatusHistory.objects.create(
         order=order,
         status=status,
+        previous_status=previous or "",
         note=note,
         changed_by=by,
     )
@@ -602,6 +603,7 @@ def cancel_order(
         status=PaymentRecordStatus.CREATED,
     ).update(status=PaymentRecordStatus.CANCELLED)
 
+    previous_status_before_cancel = order.status
     order.status = OrderStatus.CANCELLED
 
     order.save(update_fields=[
@@ -610,7 +612,7 @@ def cancel_order(
         "updated_at",
     ])
 
-    _record(order, OrderStatus.CANCELLED, note, by)
+    _record(order, OrderStatus.CANCELLED, note, by, previous_status_before_cancel)
 
     message = f"Your order {order.order_number} was cancelled."
 
@@ -663,6 +665,7 @@ def advance_status(order_id, new_status, by=None, note=""):
             )
         })
 
+    previous = order.status
     order.status = new_status
     fields = ["status", "updated_at"]
 
@@ -682,7 +685,7 @@ def advance_status(order_id, new_status, by=None, note=""):
 
     order.save(update_fields=fields)
 
-    _record(order, new_status, note, by)
+    _record(order, new_status, note, by, previous)
 
     title, kind = _STATUS_MESSAGES[new_status]
 
@@ -694,4 +697,69 @@ def advance_status(order_id, new_status, by=None, note=""):
         order,
     )
 
+    return order
+
+
+def can_revert_status(user):
+    """Only authenticated, active staff (admins) with the change_order permission, or superusers."""
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and user.is_active
+        and user.is_staff
+        and (user.is_superuser or user.has_perm("orders.change_order"))
+    )
+
+
+@transaction.atomic
+def revert_status(order_id, new_status, by, reason):
+    """Admin-only: move an order BACK to an earlier status of the delivery flow.
+
+    Enforced here (not in the views) so the Django admin, the staff API and any future caller share
+    the same rules. A reason is mandatory and is stored in the status history together with the
+    admin, the previous status, the new status and the timestamp.
+    """
+    if not can_revert_status(by):
+        raise PermissionDenied("Only admin users can move an order back to an earlier status.")
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValidationError({"reason": "A reason is required when moving an order backward."})
+    if len(reason) > 200:
+        raise ValidationError({"reason": "Keep the reason within 200 characters."})
+
+    order = Order.objects.select_for_update().get(pk=order_id)
+
+    if order.status not in FLOW:
+        raise ValidationError({
+            "status": f"A '{order.get_status_display()}' order cannot be moved back."
+        })
+    if new_status not in FLOW or FLOW.index(new_status) >= FLOW.index(order.status):
+        raise ValidationError({"status": "Choose an earlier status of the delivery flow."})
+
+    previous = order.status
+    order.status = new_status
+    fields = ["status", "updated_at"]
+
+    # Leaving "Delivered" undoes what delivery did for cash-on-delivery orders: the cash is no longer
+    # confirmed as collected. Online payments are never touched here (refunds stay a separate action).
+    if previous == OrderStatus.DELIVERED and order.payment_method == PaymentMethod.COD \
+            and order.payment_status == PaymentStatus.PAID:
+        from payments.models import Payment, PaymentRecordStatus
+
+        order.payment_status = PaymentStatus.PENDING
+        fields.append("payment_status")
+        Payment.objects.filter(order=order, method=PaymentMethod.COD, status=PaymentRecordStatus.SUCCESS) \
+            .update(status=PaymentRecordStatus.CREATED)
+
+    order.save(update_fields=fields)
+    _record(order, new_status, reason, by, previous)
+
+    notify(
+        order.user,
+        "Order status updated",
+        f"Order {order.order_number}: status updated to {OrderStatus(new_status).label}.",
+        Notification.ORDER,
+        order,
+    )
     return order

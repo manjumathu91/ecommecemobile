@@ -53,6 +53,7 @@ class Base(APITestCase):
             price=Decimal("1000"),
             discount_price=Decimal("800"),
             stock=5,
+            gst_rate=Decimal("0"),
         )
 
         self.p2 = Product.objects.create(
@@ -60,6 +61,7 @@ class Base(APITestCase):
             name="Cheap",
             price=Decimal("100"),
             stock=10,
+            gst_rate=Decimal("0"),
         )
 
         self.user = User.objects.create_user(
@@ -180,7 +182,7 @@ class CheckoutCodTests(Base):
 
     def test_delivery_charge_below_threshold(self):
         self.add(self.p2, 1)  # 100 < 500
-        self.assertEqual(self.client.post("/api/checkout/summary/", {}).data["delivery_charge"], Decimal("40"))
+        self.assertEqual(self.client.post("/api/checkout/summary/", {"address_id": self.addr.id}).data["delivery_charge"], Decimal("40"))
 
     def test_price_snapshot_survives_price_change(self):
         self.add(self.p1, 1)
@@ -437,8 +439,8 @@ class AdminDashboardTests(Base):
         self.client.force_login(admin)
         r = self.client.get("/admin/")
         self.assertEqual(r.status_code, 200)
-        self.assertContains(r, "Total sales")
-        self.assertContains(r, "Best-selling products")
+        self.assertContains(r, "Total Sales")
+        self.assertContains(r, "Best Sellers")
         self.assertEqual(r.context["stats"]["total_orders"], 1)
 
     def test_admin_requires_staff(self):

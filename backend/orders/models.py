@@ -190,6 +190,9 @@ class OrderItem(models.Model):
 class OrderStatusHistory(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="history")
     status = models.CharField(max_length=20, choices=OrderStatus.choices)
+    # status the order had before this change ("" for the first entry / entries written before this field existed)
+    previous_status = models.CharField(max_length=20, choices=OrderStatus.choices, blank=True, default="")
+    # note = reason for admin changes (mandatory when an order is moved backward)
     note = models.CharField(max_length=200, blank=True)
     changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

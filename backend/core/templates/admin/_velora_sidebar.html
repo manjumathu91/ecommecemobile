@@ -1,0 +1,74 @@
+<nav id="nav-sidebar" class="velora-sidebar" aria-label="Main navigation">
+
+    <div class="sidebar-section-title">MAIN MENU</div>
+    <a href="{% url 'shop_admin:index' %}" class="sidebar-link">
+        <span class="sidebar-icon">▦</span>
+        <span>Dashboard</span>
+    </a>
+
+    <div class="sidebar-section-title">CATALOG</div>
+    <a href="{% url 'shop_admin:products_product_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">▣</span>
+        <span>Products</span>
+    </a>
+    <a href="{% url 'shop_admin:categories_category_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">▤</span>
+        <span>Categories</span>
+    </a>
+    <a href="{% url 'shop_admin:products_banner_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">▧</span>
+        <span>Banners</span>
+    </a>
+
+    <div class="sidebar-section-title">SALES</div>
+    <a href="{% url 'shop_admin:orders_order_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">▣</span>
+        <span>Orders</span>
+    </a>
+    <a href="{% url 'shop_admin:accounts_user_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">♙</span>
+        <span>Customers</span>
+    </a>
+    <a href="{% url 'shop_admin:orders_stockmovement_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">▥</span>
+        <span>Inventory</span>
+    </a>
+    <a href="{% url 'shop_admin:coupons_coupon_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">％</span>
+        <span>Coupons</span>
+    </a>
+
+    <div class="sidebar-section-title">MANAGEMENT</div>
+    <a href="{% url 'shop_admin:payments_payment_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">₹</span>
+        <span>Payments</span>
+    </a>
+    <a href="{% url 'shop_admin:reviews_productreview_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">☆</span>
+        <span>Reviews</span>
+    </a>
+    <a href="{% url 'shop_admin:notifications_notification_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">♧</span>
+        <span>Notifications</span>
+    </a>
+    <a href="{% url 'shop_admin:wishlist_wishlist_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">♡</span>
+        <span>Wishlist</span>
+    </a>
+    <a href="{% url 'shop_admin:addresses_address_changelist' %}" class="sidebar-link">
+        <span class="sidebar-icon">⌂</span>
+        <span>Addresses</span>
+    </a>
+    <a href="{% url 'shop_admin:ai_assistant' %}" class="sidebar-link">
+        <span class="sidebar-icon">✦</span>
+        <span>AI Assistant</span>
+    </a>
+
+    <div class="sidebar-footer">
+        <div class="footer-logo">V</div>
+        <div>
+            <strong>VELORA ADMIN</strong>
+            <small>Commerce Management</small>
+        </div>
+    </div>
+</nav>

@@ -1,0 +1,51 @@
+{% extends "admin/change_form.html" %}
+{% block after_field_sets %}
+{{ block.super }}
+{% if original and can_update_status %}
+<fieldset class="module aligned">
+  <h2>Update order status</h2>
+  {% if next_statuses or previous_statuses %}
+  <form method="post" action="{% url 'shop_admin:orders_order_update_status' original.pk %}"
+        onsubmit="return confirm('Change this order\'s status? The customer will be notified.');">
+    {% csrf_token %}
+    <div class="form-row">
+      <label for="id_new_status">New status:</label>
+      <select name="status" id="id_new_status" required>
+        {% if next_statuses %}<optgroup label="Move forward / cancel">
+          {% for value, label in next_statuses %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </optgroup>{% endif %}
+        {% if previous_statuses %}<optgroup label="Move backward (admins only, reason required)">
+          {% for value, label in previous_statuses %}<option value="{{ value }}" data-backward="1">{{ label }} (backward)</option>{% endfor %}
+        </optgroup>{% endif %}
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="id_status_note">Note (optional):</label>
+      <input type="text" name="note" id="id_status_note" maxlength="200" class="vTextField">
+    </div>
+    {% if previous_statuses %}
+    <div class="form-row" id="reason_row" style="display:none">
+      <label for="id_reason" class="required">Reason (required for backward moves):</label>
+      <input type="text" name="reason" id="id_reason" maxlength="200" class="vTextField">
+    </div>
+    <script>
+      (function () {
+        var sel = document.getElementById('id_new_status'), row = document.getElementById('reason_row'),
+            reason = document.getElementById('id_reason');
+        function sync() {
+          var back = sel.options[sel.selectedIndex].hasAttribute('data-backward');
+          row.style.display = back ? '' : 'none';
+          reason.required = back;
+        }
+        sel.addEventListener('change', sync); sync();
+      })();
+    </script>
+    {% endif %}
+    <div class="submit-row"><input type="submit" value="Update status" class="default"></div>
+  </form>
+  {% else %}
+  <p class="help">This order is {{ original.get_status_display|lower }} and cannot move to another status.</p>
+  {% endif %}
+</fieldset>
+{% endif %}
+{% endblock %}

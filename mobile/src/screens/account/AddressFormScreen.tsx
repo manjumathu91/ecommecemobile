@@ -75,8 +75,10 @@ export default function AddressFormScreen({
 
   const [locating, setLocating] = useState(false);
   const [locationSelected, setLocationSelected] = useState(
-    Boolean(editing?.latitude && editing?.longitude)
+    editing?.latitude != null &&
+    editing?.longitude != null
   );
+
 
   // ====================================================
   // FORM SETUP
@@ -117,142 +119,141 @@ export default function AddressFormScreen({
   // GET CURRENT LOCATION
   // ====================================================
 
-  const getCurrentLocation = async () => {
 
-    try {
+const getCurrentLocation = async () => {
+  try {
+    setLocating(true);
 
-      setLocating(true);
+    const permission =
+      await Location.requestForegroundPermissionsAsync();
 
-      const permission =
-        await Location.requestForegroundPermissionsAsync();
-
-      if (!permission.granted) {
-
-        toast.show(
-          'Location permission is required to detect your address.',
-          'error'
-        );
-
-        return;
-      }
-
-      const enabled =
-        await Location.hasServicesEnabledAsync();
-
-      if (!enabled) {
-
-        toast.show(
-          'Please enable GPS location on your device.',
-          'error'
-        );
-
-        return;
-      }
-
-      const position =
-        await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-        });
-
-      const latitude = position.coords.latitude;
-      const longitude = position.coords.longitude;
-
-      setValue('latitude', latitude, {
-        shouldValidate: true,
-      });
-
-      setValue('longitude', longitude, {
-        shouldValidate: true,
-      });
-
-      setLocationSelected(true);
-
-      // Reverse geocoding
-
-      const addresses =
-        await Location.reverseGeocodeAsync({
-          latitude,
-          longitude,
-        });
-
-      if (addresses.length > 0) {
-
-        const address = addresses[0];
-
-        const street =
-          [
-            address.street,
-            address.subregion,
-          ]
-            .filter(Boolean)
-            .join(', ');
-
-        const city =
-          address.city ||
-          address.district ||
-          address.subregion ||
-          '';
-
-        const state =
-          address.region || '';
-
-        const postalCode =
-          address.postalCode || '';
-
-        if (street) {
-          setValue('street', street, {
-            shouldValidate: true,
-          });
-        }
-
-        if (city) {
-          setValue('city', city, {
-            shouldValidate: true,
-          });
-        }
-
-        if (state) {
-          setValue('state', state, {
-            shouldValidate: true,
-          });
-        }
-
-        if (/^\d{6}$/.test(postalCode)) {
-          setValue('postal_code', postalCode, {
-            shouldValidate: true,
-          });
-        }
-
-        toast.show(
-          'Location detected! Please verify your address.',
-          'success'
-        );
-
-      } else {
-
-        toast.show(
-          'GPS detected. Please enter your address manually.',
-          'success'
-        );
-
-      }
-
-    } catch (error) {
-
-      console.log('Location error:', error);
-
+    if (!permission.granted) {
       toast.show(
-        'Unable to detect address. Please enter it manually.',
+        'Location permission is required to detect your address.',
         'error'
       );
-
-    } finally {
-
-      setLocating(false);
-
+      return;
     }
 
-  };
+    const enabled = await Location.hasServicesEnabledAsync();
+
+    if (!enabled) {
+      toast.show(
+        'Please enable GPS location on your device.',
+        'error'
+      );
+      return;
+    }
+
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+    });
+
+    const latitude = position.coords.latitude;
+    const longitude = position.coords.longitude;
+
+    // Save GPS coordinates
+    setValue('latitude', latitude, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    setValue('longitude', longitude, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    setLocationSelected(true);
+
+    // Reverse geocoding
+    const addresses = await Location.reverseGeocodeAsync({
+      latitude,
+      longitude,
+    });
+
+    console.log('Reverse Geocode Result:', addresses);
+
+    if (!addresses.length) {
+      toast.show(
+        'GPS detected. Please enter your address manually.',
+        'success'
+      );
+      return;
+    }
+
+    const address = addresses[0];
+
+    const street = [
+      address.street,
+      address.district,
+      address.subregion,
+    ]
+      .filter(Boolean)
+      .filter((value, index, array) =>
+        array.indexOf(value) === index
+      )
+      .join(', ');
+
+    const city =
+      address.city ||
+      address.subregion ||
+      address.district ||
+      address.name ||
+      '';
+
+    const state =
+      address.region || '';
+
+    const postalCode =
+      address.postalCode || '';
+
+    console.log('Mapped Address:', {
+      street,
+      city,
+      state,
+      postalCode,
+    });
+
+    // Populate form fields
+    setValue('street', street, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    setValue('city', city, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    setValue('state', state, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    if (/^\d{6}$/.test(postalCode)) {
+      setValue('postal_code', postalCode, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    }
+
+    toast.show(
+      'Location detected! Please verify your address.',
+      'success'
+    );
+
+  } catch (error) {
+    console.log('Location error:', error);
+
+    toast.show(
+      'Unable to detect address. Please enter it manually.',
+      'error'
+    );
+
+  } finally {
+    setLocating(false);
+  }
+};
 
   // ====================================================
   // SUBMIT FORM
